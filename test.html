@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vplay phone test</title>
+<style>
+body{margin:0;padding:0;background:#ffffff;color:#111111;font-family:sans-serif}
+a{color:#0b5bd3}
+.hd{background:#14213d;color:#ffffff;padding:2px 4px;font-weight:bold}
+.bn{background:#fff3b0;padding:4px;border-bottom:1px solid #d9c25a}
+.t{padding:4px;border-bottom:1px solid #cccccc}
+.n{font-weight:bold}
+.ok{color:#1a7f37;font-weight:bold}
+.no{color:#c0392b;font-weight:bold}
+.q{color:#555555}
+.fx{display:flex}
+.fx div{width:28px;padding:2px 0;color:#ffffff;text-align:center;font-weight:bold}
+</style>
+</head>
+<body>
+<div class="hd">vplay phone test v1</div>
+<script>
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+var q={},s=location.search.replace(/^\?/,'');
+if(s){var p=s.split('&');for(var i=0;i<p.length;i++){var k=p[i].split('=');try{q[k[0]]=decodeURIComponent((k[1]||'').replace(/\+/g,' '));}catch(e){}}}
+var b='';
+if(q.h){b='Reloaded (item 11). Where is the highlight now: at the top of the page, or still on the item 11 link?';}
+if(q.j){b='Item 12: did the page open at item 16 near the bottom, or at the top?';}
+if(q.k){b='Item 13: key '+esc(q.k)+' opened this page. Number key links work.';}
+if(q.w!==undefined){b='Item 15: you typed: '+esc(q.w);}
+if(b){document.write('<div class="bn">'+b+'</div>');}
+</script>
+<div class="t"><span class="n">1. Scripts:</span>
+<script>document.write('<span class="ok">YES, scripts ran</span>');</script>
+<noscript><span class="no">NO, scripts did not run</span></noscript></div>
+
+<div class="t"><span class="n">2. Browser:</span><br><span class="q">
+<script>
+var om=false;try{om=Object.prototype.toString.call(window.operamini)==='[object OperaMini]';}catch(e){}
+var info='Opera Mini object: '+(om?'yes':'no')+'<br>Screen: '+screen.width+'x'+screen.height+', window '+(window.innerWidth||'?')+'<br>'+esc(navigator.userAgent);
+try{if(om){info+='<br>Features: '+esc(operamini.features||'?')+'<br>Phone: '+esc(operamini.phone||'?')+'<br>Phone UA: '+esc(operamini.remoteua||'?');}}catch(e){}
+document.write(info);
+</script></span></div>
+
+<div class="t"><span class="n">3. Picture in page:</span><br>
+<svg xmlns="http://www.w3.org/2000/svg" width="40" height="24" viewBox="0 0 40 24"><rect width="40" height="24" fill="#2e8c46"/><circle cx="20" cy="12" r="9" fill="#d93a30"/></svg>
+<br><span class="q">Should be a red circle on a green box.</span></div>
+
+<div class="t"><span class="n">4. Picture drawn by script (how the games draw):</span><br>
+<script>document.write('<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="40" height="24" viewBox="0 0 40 24"><defs><g id="t4" shape-rendering="crispEdges"><path fill="#ffd23c" d="M3 0h2v1h-2zM2 1h4v1h-4zM1 2h6v1h-6zM0 3h8v1h-8z"/><path fill="#e03c32" d="M2 4h4v2h-4z"/></g></defs><rect width="40" height="24" fill="#2860c8"/><use xlink:href="#t4" x="6" y="9"/><use xlink:href="#t4" x="26" y="9"/></svg>');</script>
+<br><span class="q">Should be two small yellow and red houses on a blue box.</span></div>
+
+<div class="t"><span class="n">5. Picture as image:</span><br>
+<script>document.write('<img width="40" height="24" alt="" src="data:image/svg+xml;charset=utf-8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="24"><rect width="40" height="24" fill="#ffffff"/><circle cx="20" cy="12" r="10" fill="#7840a0"/></svg>')+'">');</script>
+<br><span class="q">Should be a purple circle.</span></div>
+
+<div class="t"><span class="n">6. Small photo-style image:</span><br>
+<img width="24" height="24" alt="" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABgAAAAYAgMAAACdGdVrAAAADFBMVEX/AP8AAAD///8AAAASEvtWAAAAMUlEQVR42mNgYA1lYA1lYmBgYGBgwEcxhAYwhAZgymmFYKhkYM1agcXM1xHEmolJAQBCFQajOqWZrAAAAABJRU5ErkJggg==">
+<br><span class="q">Should be a pink and black checkerboard with a white centre.</span></div>
+
+<div class="t"><span class="n">7. Coloured table:</span>
+<table cellspacing="0" cellpadding="0" border="0"><tr><td width="16" height="12" bgcolor="#d93a30"></td><td width="16" height="12" bgcolor="#2e8c46"></td><td width="16" height="12" bgcolor="#2860c8"></td><td width="16" height="12" bgcolor="#facc32"></td></tr></table>
+<span class="q">Should be red, green, blue, yellow in one row.</span></div>
+
+<div class="t"><span class="n">8. Side by side:</span>
+<div class="fx"><div style="background:#d93a30">A</div><div style="background:#2e8c46">B</div><div style="background:#2860c8">C</div></div>
+<span class="q">Should show A B C in one row, not stacked.</span></div>
+
+<div class="t"><span class="n">9. Symbols:</span> &#9650; &#9664; &#9654; &#9660; &#9679; &#8592; &#8594; &#8593; &#8595; &#8358;
+<br><span class="q">Do these show as arrows, a dot and the naira sign, or as boxes or question marks?</span></div>
+
+<div class="t"><span class="n">10. Arabic:</span>
+<div dir="rtl">&#1571;&#1604;&#1593;&#1575;&#1576; vplay</div>
+<span class="q">The Arabic letters should be joined and on the right, with vplay on the left.</span></div>
+
+<div class="t"><span class="n">11. Highlight after a reload:</span><br>
+<a href="?h=1">Reload this page</a>
+<br><span class="q">Select it. After the page reloads, note where the highlight is.</span></div>
+
+<div class="t"><span class="n">12. Jump to a section:</span><br>
+<a href="?j=1#t16">Reload and jump to item 16</a></div>
+
+<div class="t"><span class="n">13. Number keys:</span><br>
+<a href="?k=1" accesskey="1">[1] link</a> &middot; <a href="?k=3" accesskey="3">[3] link</a> &middot; <a href="?k=7" accesskey="7">[7] link</a>
+<br><span class="q">Without selecting a link, press 1, 3 or 7 on the keypad. Does the page reload with a yellow note at the top, or does the browser do something else?</span></div>
+
+<div class="t"><span class="n">14. Memory between visits:</span>
+<script>
+var c=0;try{var m=document.cookie.match(/(?:^|; )vt=(\d+)/);c=m?parseInt(m[1],10):0;c++;document.cookie='vt='+c+'; max-age=31536000; path=/';}catch(e){}
+document.write('This page has loaded <b>'+c+'</b> time'+(c===1?'':'s')+' on this phone.');
+</script>
+<br><span class="q">Reload the page. The number should go up.</span></div>
+
+<div class="t"><span class="n">15. Typing:</span>
+<form method="get" action="test.html"><input type="text" name="w" size="8"> <input type="submit" value="Go"></form>
+<span class="q">Type a word and press Go.</span></div>
+
+<div class="t"><span class="n">16. Tap without reload:</span><a name="t16" id="t16"></a><br>
+<a href="#" onclick="document.getElementById('c16').innerHTML='Changed!';return false;">Tap me</a> <span id="c16">Not changed</span>
+<br><span class="q">Does the text change to "Changed!"?</span></div>
+
+<div class="t"><span class="n">17. Short timer:</span> <span id="c17">Timer did not run</span>
+<script>setTimeout(function(){var e=document.getElementById('c17');if(e){e.innerHTML='Timer ran';}},200);</script></div>
+
+<div class="t"><a href="./">Back to the games</a></div>
+</body>
+</html>
