@@ -52,19 +52,19 @@ a{color:#1c3e9c;text-decoration:none;font-weight:bold}
 .sb{text-align:center;background:#ffffff;padding:5px 0}
 .big{font-size:22px;font-weight:bold;color:#101a3a}
 .nb{background:#1e8a3c;color:#ffffff;padding:0 4px;font-weight:bold}
-/* Computers only: show the site as an enlarged 160px phone screen. Old
-   engines such as Opera Mini's servers don't know "pointer", so they skip
-   this block and the phone layout is never affected. */
+/* Computers only: show the site as an enlarged 240x320 phone screen, the
+   size of the HMD test phone. Old engines such as Opera Mini's servers don't
+   know "pointer", so they skip this block and the phone layout is unaffected. */
 @media screen and (min-width: 600px) and (pointer: fine) {
-html{background:#1b1f27;padding:16px 0}
-body{width:160px;min-height:213px;margin:0 auto;zoom:2;border:6px solid #2b303b;border-radius:6px}
+html{background:#1b1f27;padding:12px 0}
+body{width:240px;min-height:320px;margin:0 auto;zoom:2;border:5px solid #2b303b;border-radius:6px}
 }
 </style>
 </head>
 <body>
 <noscript><p>Scripts are switched off, so the games can't load.</p></noscript>
-<script src="art.js"></script>
-<script src="app.js"></script>
+<script src="art.js?v=3"></script>
+<script src="app.js?v=3"></script>
 <script>V.main();</script>
 </body>
 </html>

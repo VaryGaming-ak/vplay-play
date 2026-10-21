@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vplay games check</title>
+<style>
+body{margin:0;padding:0;background:#ffffff;color:#111111;font-family:sans-serif}
+a{color:#0b5bd3}
+.hd{background:#14213d;color:#ffffff;padding:2px 4px;font-weight:bold}
+.t{padding:3px 4px;border-bottom:1px solid #cccccc}
+.n{font-weight:bold}
+.ok{color:#1a7f37;font-weight:bold}
+.no{color:#c0392b;font-weight:bold}
+.q{color:#555555}
+</style>
+</head>
+<body>
+<div class="hd">vplay games check v3</div>
+<script>
+var D = { t0: new Date().getTime() };
+function dEsc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function dOk(s) { return '<span class="ok">' + s + '</span>'; }
+function dNo(s) { return '<span class="no">' + s + '</span>'; }
+function dErr(e) { return dEsc((e && (e.message || e.name)) || e); }
+document.write('<div class="t"><span class="n">1. Page script:</span> ' + dOk('YES') + '</div>');
+</script>
+<noscript><div class="t"><span class="n">1. Page script:</span> <span class="no">NO</span></div></noscript>
+<script src="art.js?v=3"></script>
+<script>
+document.write('<div class="t"><span class="n">2. Picture file (art.js):</span> ' +
+  (typeof ART === 'object' && ART.SPR ? dOk('YES, loaded') : dNo('NO, not loaded')) + '</div>');
+</script>
+<script src="app.js?v=3"></script>
+<script>
+(function () {
+  var h = '', t, out, m, w = 0;
+  h += '<div class="t"><span class="n">3. Game file (app.js):</span> ' +
+    (typeof V === 'object' && V.render ? dOk('YES, loaded') : dNo('NO, not loaded')) + '</div>';
+  if (typeof V === 'object' && V.render) {
+    try {
+      t = new Date().getTime(); out = V.render('');
+      h += '<div class="t"><span class="n">4. Build games list:</span> ' + dOk('YES') + ' <span class="q">' + out.length + ' characters, ' + (new Date().getTime() - t) + ' ms</span></div>';
+    } catch (e) { h += '<div class="t"><span class="n">4. Build games list:</span> ' + dNo('NO') + '<br><span class="q">Error: ' + dErr(e) + '</span></div>'; }
+    try {
+      t = new Date().getTime(); out = V.render('?p=p&g=road');
+      h += '<div class="t"><span class="n">5. Build a game screen:</span> ' + dOk('YES') + ' <span class="q">' + out.length + ' characters, ' + (new Date().getTime() - t) + ' ms</span></div>';
+      m = out.match(/class="fr">(<svg[\s\S]*?<\/svg>)/);
+      h += '<div class="t"><span class="n">6. Game picture:</span><br>' + (m ? m[1] : dNo('no picture made')) +
+        '<br><span class="q">Should be a road with cars, a chicken at the bottom.</span></div>';
+    } catch (e2) { h += '<div class="t"><span class="n">5. Build a game screen:</span> ' + dNo('NO') + '<br><span class="q">Error: ' + dErr(e2) + '</span></div>'; }
+  }
+  try { w = document.body.clientWidth; } catch (e3) { w = 0; }
+  h += '<div class="t"><span class="n">7. Page width:</span> <span class="q">body ' + w + ', window ' + (window.innerWidth || '?') + ', screen ' + screen.width + '</span></div>';
+  h += '<div class="t"><span class="n">8. Total time:</span> <span class="q">' + (new Date().getTime() - D.t0) + ' ms</span></div>';
+  h += '<div class="t"><span class="n">9. Open a game:</span><br><a href="./?p=i&amp;g=road">Road Crossa page</a><br><a href="./?p=p&amp;g=road">Road Crossa, straight to play</a><br><a href="./">All games</a></div>';
+  document.write(h);
+}());
+</script>
+</body>
+</html>

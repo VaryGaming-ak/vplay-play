@@ -39,7 +39,7 @@ if(b){document.write('<div class="bn">'+b+'</div>');}
 <script>
 var om=false;try{om=Object.prototype.toString.call(window.operamini)==='[object OperaMini]';}catch(e){}
 var info='Opera Mini object: '+(om?'yes':'no')+'<br>Screen: '+screen.width+'x'+screen.height+', window '+(window.innerWidth||'?')+'<br>'+esc(navigator.userAgent);
-try{if(om){info+='<br>Features: '+esc(operamini.features||'?')+'<br>Phone: '+esc(operamini.phone||'?')+'<br>Phone UA: '+esc(operamini.remoteua||'?');}}catch(e){}
+try{if(om){var fl=[],fk;try{for(fk in operamini.features){fl.push(fk+'='+operamini.features[fk]);}}catch(e3){}info+='<br>Features: '+esc(fl.length?fl.join(', '):'none listed')+'<br>Phone: '+esc(operamini.phone||'?')+'<br>Phone UA: '+esc(operamini.remoteua||'?');}}catch(e){}
 document.write(info);
 </script></span></div>
 

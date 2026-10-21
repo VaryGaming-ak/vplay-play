@@ -102,7 +102,16 @@ var V = (function () {
   function P(sc, p, f) { sc.it.push({ t: 'p', p: p, f: f }); }
   function T(sc, x, y, s, f, z) { sc.it.push({ t: 'x', x: x, y: y, s: String(s), f: f, z: z || 9 }); }
   function S(sc, x, y, n, o) { o = o || {}; sc.it.push({ t: 's', x: x, y: y, n: n, fx: o.fx, ro: o.ro, sw: o.sw, k: o.k || 1 }); }
-  function zoom() { return Q.z === '2' ? 2 : 1; }
+  /* Picture size. Small (?z=1) and Big (?z=2) are fixed; with no z the size is
+     worked out from the page width Opera's server reports (230 on a 240x320
+     phone), so the 120-unit-wide game pictures fill the screen without spilling. */
+  var FIT = 1;
+  function fitZoom() {
+    var w = 0;
+    try { w = (document.body && document.body.clientWidth) || window.innerWidth || screen.width || 0; } catch (e) { w = 0; }
+    return Math.max(1, Math.min(2, Math.floor(w / 12) / 10));
+  }
+  function zoom() { return Q.z === '1' ? 1 : Q.z === '2' ? 2 : FIT; }
   function n1(v) { return Math.round(v * 10) / 10; }
 
   function toSvg(sc, z) {
@@ -997,8 +1006,10 @@ var V = (function () {
     each([['svg', 'SVG'], ['img', 'Image'], ['tbl', 'Table']], function (m) {
       h += (r === m[0] ? '<span class="on">' + m[1] + '</span>' : lnk(url({ p: Q.p, g: Q.g, s: Q.s, r: m[0] }), m[1])) + ' ';
     });
-    h += '<br>Screen: ' + (z === 2 ? lnk(url({ p: Q.p, g: Q.g, s: Q.s, z: '1' }), 'Small') + ' <span class="on">Big</span>' :
-      '<span class="on">Small</span> ' + lnk(url({ p: Q.p, g: Q.g, s: Q.s, z: '2' }), 'Big'));
+    h += '<br>Size: ';
+    each([['', 'Auto'], ['1', 'Small'], ['2', 'Big']], function (m) {
+      h += ((Q.z || '') === m[0] ? '<span class="on">' + m[1] + '</span>' : lnk(url({ p: Q.p, g: Q.g, s: Q.s, z: m[0] }), m[1])) + ' ';
+    });
     return h + '<br>' + lnk('test.html', 'Phone test page') + '</div>';
   }
 
@@ -1029,7 +1040,7 @@ var V = (function () {
     h += '<div class="ti"><b>' + g.name + '</b><br><span class="tag" style="background:' + c.col + '">' + c.name + '</span> <span class="tag tg">' + g.mins +
       '</span> <span class="tag t2">2G ok</span></div>';
     h += '<div class="p">' + g.blurb + '</div>';
-    h += lnk(url({ p: 'p', g: id, s: g.enc(g.init(newSeed())) }), 'Play', 'btn');
+    h += lnk(url({ p: 'p', g: id, s: g.enc(g.init(newSeed())), f: '1' }), 'Play', 'btn');
     h += '<div class="sec">How to play</div>';
     g.help(hs);
     h += '<div class="hp">' + pic(hs) + '</div>';
@@ -1046,7 +1057,7 @@ var V = (function () {
     lv = g.lives(st);
     /* No links above the controls: after each reload the first link the
        phone highlights should be a game control. */
-    ev = g.ev(st);
+    ev = g.ev(st) || (Q.f ? g.short : '');
     /* An event message takes over the header line, so the picture and the
        controls never move down the screen. */
     h = '<div class="hd hs' + (ev ? ' hev' : '') + '">' + (lv ? '<span class="r">' + hearts(lv) + '</span>' : '') + (ev || g.top(st)) + '</div>';
@@ -1095,7 +1106,11 @@ var V = (function () {
 
   function main() {
     var html;
-    try { html = render(location.search); } catch (e) { html = topBar(logo()) + '<div class="p">Something went wrong. ' + lnk('./', 'Start again') + '</div>'; }
+    FIT = fitZoom();
+    try { html = render(location.search); } catch (e) {
+      html = topBar(logo()) + '<div class="p">Something went wrong. ' + lnk('./', 'Start again') +
+        '<br><span class="d">Error: ' + esc((e && (e.message || e.name)) || e) + '</span></div>';
+    }
     try { if (window.operamini && window.operamini.page) { window.operamini.page.maxAge = Q.p ? 60 : 0; } } catch (e2) { }
     document.write(html);
   }
