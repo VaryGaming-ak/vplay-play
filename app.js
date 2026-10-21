@@ -1,231 +1,65 @@
-/* vplay Games lite: step-based games for Opera Mini on basic phones.
-   ES5 on purpose. Opera Mini runs this script on Opera's servers each time a
-   page loads. Game state travels in the link (?s=...), so there is no backend
-   and no browser storage. Needs art.js (palette and sprites) loaded first. */
+/* vplay Games v4 for Opera Mini on keypad phones.
+   ES5 only. Opera Mini runs this on Opera's servers on every page load and
+   sends the phone a snapshot, so: no timers, no key events, no animation.
+   Every move is a link; the game position travels in the link (?s=...).
+   Controls are one vertical list of at most 4 choices, usual move first,
+   because only Up/Down move the highlight and the first link is highlighted
+   after each load (tested on an HMD phone, 21 Oct 2026). */
 var V = (function () {
-  var G = {};
-  var ORDER = ['chop', 'harm', 'road', 'coco', 'mamba', 'pen', 'oware', 'cowrie'];
-  var CATS = [
-    { id: 'arcade', name: 'Arcade', col: '#e03c32', note: 'Quick action' },
-    { id: 'sports', name: 'Sports', col: '#1e8a3c', note: 'Football' },
-    { id: 'board', name: 'Board', col: '#8a5a2e', note: 'Classic African' },
-    { id: 'puzzle', name: 'Puzzle', col: '#9a4fd0', note: 'Think ahead' }
-  ];
-  var PAL = ART.PAL, SPR = ART.SPR, SPC = {}, SVGN = 0;
-  var Q = {};
+  var G = {}, Q = {}, PW = 226, MAXH = 120, SMALL = false, BOOT = { w: 0 };
+  var ORDER = ['whot', 'danfo', 'dambe', 'pen', 'ayo', 'mango', 'cowrie', 'story'];
+  var CATS = {
+    cards: ['Cards', '#8a1c1c'], racing: ['Racing', '#e03c32'], action: ['Action', '#f28c1e'], sports: ['Sports', '#1e8a3c'],
+    board: ['Board', '#8a5a2e'], shooting: ['Shooting', '#1c3e9c'], puzzle: ['Puzzle', '#9a4fd0'], story: ['Story', '#22a6a0']
+  };
 
-  /* ---------- small helpers ---------- */
+  /* ---------- helpers ---------- */
   function each(a, f) { for (var i = 0; i < a.length; i++) { f(a[i], i); } }
-  function esc(s) {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  }
+  function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
   function b36(n) { return n.toString(36); }
   function p36(s) { var n = parseInt(s, 36); return isNaN(n) ? 0 : n; }
-  function num(s) { var n = parseInt(s, 10); return isNaN(n) ? 0 : n; }
   function rnd(st) { st.r = (st.r * 16807) % 2147483647; return st.r; }
-  function ri(st, n) { return rnd(st) % n; }
+  function ri(st, n) { return Math.floor(rnd(st) / 65536) % n; }
   function newSeed() { return (new Date().getTime() % 2147483646) + 1; }
-  function catOf(id) { for (var i = 0; i < CATS.length; i++) { if (CATS[i].id === G[id].cat) { return CATS[i]; } } return CATS[0]; }
-  function bitsEnc(bits) {
-    var out = '', i, j, v, s;
-    for (i = 0; i < bits.length; i += 20) {
-      v = 0;
-      for (j = 0; j < 20; j++) { v = v * 2 + (bits[i + j] ? 1 : 0); }
-      s = b36(v);
-      while (s.length < 4) { s = '0' + s; }
-      out += s;
-    }
-    return out;
+  function shuffle(st, a) { var i, j, t; for (i = a.length - 1; i > 0; i--) { j = ri(st, i + 1); t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
+
+  /* State packing: spec = [[name, 'i'|'a'], ...]; ints >= 0 only. */
+  function pack(spec, st) {
+    var out = [];
+    each(spec, function (f) {
+      var v = st[f[0]], p = [];
+      if (f[1] === 'a') { each(v, function (x) { p.push(b36(x)); }); out.push(p.length ? p.join('_') : 'n'); }
+      else { out.push(b36(v)); }
+    });
+    return out.join('.');
   }
-  function bitsDec(str, n) {
-    var bits = [], i, j, v, chunk, out = [];
-    for (i = 0; i < str.length; i += 4) {
-      v = p36(str.substr(i, 4));
-      chunk = [];
-      for (j = 0; j < 20; j++) { chunk.unshift(v % 2); v = Math.floor(v / 2); }
-      for (j = 0; j < 20; j++) { bits.push(chunk[j]); }
-    }
-    for (i = 0; i < n; i++) { out.push(bits[i] === 1 ? 1 : 0); }
-    return out;
-  }
-  function pts(str, size) {
-    var out = [], i, j, g;
-    if (!str) { return out; }
-    for (i = 0; i + size <= str.length; i += size) {
-      g = [];
-      for (j = 0; j < size; j++) { g.push(p36(str.charAt(i + j))); }
-      out.push(g);
-    }
-    return out;
-  }
-  function ptsEnc(list) {
-    var s = '';
-    each(list, function (g) { each(g, function (v) { s += b36(v); }); });
-    return s;
+  function unpack(spec, s) {
+    var a = String(s || '').split('.'), st = {};
+    if (a.length !== spec.length) { throw new Error('bad state'); }
+    each(spec, function (f, i) {
+      if (f[1] === 'a') { st[f[0]] = []; if (a[i] !== 'n') { each(a[i].split('_'), function (x) { st[f[0]].push(p36(x)); }); } }
+      else { st[f[0]] = p36(a[i]); }
+    });
+    return st;
   }
 
-  /* ---------- sprites ---------- */
-  function rot90(m) {
-    var out = [], x, y, row;
-    for (x = 0; x < m[0].length; x++) { row = ''; for (y = m.length - 1; y >= 0; y--) { row += m[y].charAt(x); } out.push(row); }
-    return out;
+  /* ---------- SVG pictures ---------- */
+  function svg(vw, vh, body, pw, bg) {
+    var ph = Math.round(pw * vh / vw);
+    if (ph > MAXH) { ph = MAXH; pw = Math.round(MAXH * vw / vh); }
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="' + pw + '" height="' + ph + '" viewBox="0 0 ' + vw + ' ' + vh + '">' +
+      (bg ? '<rect width="' + vw + '" height="' + vh + '" fill="' + bg + '"/>' : '') + body + '</svg>';
   }
-  function flipH(m) { var out = [], i; for (i = 0; i < m.length; i++) { out.push(m[i].split('').reverse().join('')); } return out; }
-  function sprite(name, fx, ro, sw) {
-    var key = name + '|' + (fx ? 1 : 0) + '|' + (ro || 0) + '|' + (sw || ''), m, i, map = {}, runs = [], y, x, c, st, cnt = {}, dom = '', best = 0, col;
-    if (SPC[key]) { return SPC[key]; }
-    m = SPR[name].slice();
-    for (i = 0; i < (ro || 0); i++) { m = rot90(m); }
-    if (fx) { m = flipH(m); }
-    if (sw) { each(sw.split(','), function (p) { map[p.charAt(0)] = p.substr(2); }); }
-    for (y = 0; y < m.length; y++) {
-      x = 0;
-      while (x < m[y].length) {
-        c = m[y].charAt(x);
-        if (c === '.') { x++; continue; }
-        st = x;
-        while (x < m[y].length && m[y].charAt(x) === c) { x++; }
-        col = map[c] !== undefined ? map[c] : c;
-        col = PAL[col] || col;
-        runs.push([st, y, x - st, col]);
-        if (c !== 'k') { cnt[col] = (cnt[col] || 0) + (x - st); if (cnt[col] > best) { best = cnt[col]; dom = col; } }
-      }
-    }
-    SPC[key] = { w: m[0].length, h: m.length, runs: runs, dom: dom || PAL.k };
-    return SPC[key];
-  }
-
-  /* ---------- scenes and the three picture modes ---------- */
-  function scene(w, h, cw, ch, bg) { return { w: w, h: h, cw: cw, ch: ch, bg: bg, it: [] }; }
-  function R(sc, x, y, w, h, f) { sc.it.push({ t: 'r', x: x, y: y, w: w, h: h, f: f }); }
-  function C(sc, x, y, r, f) { sc.it.push({ t: 'c', x: x, y: y, r: r, f: f }); }
-  function P(sc, p, f) { sc.it.push({ t: 'p', p: p, f: f }); }
-  function T(sc, x, y, s, f, z) { sc.it.push({ t: 'x', x: x, y: y, s: String(s), f: f, z: z || 9 }); }
-  function S(sc, x, y, n, o) { o = o || {}; sc.it.push({ t: 's', x: x, y: y, n: n, fx: o.fx, ro: o.ro, sw: o.sw, k: o.k || 1 }); }
-  /* Picture size. Small (?z=1) and Big (?z=2) are fixed; with no z the size is
-     worked out from the page width Opera's server reports (230 on a 240x320
-     phone), so the 120-unit-wide game pictures fill the screen without spilling. */
-  var FIT = 1;
-  function fitZoom() {
-    var w = 0;
-    try { w = (document.body && document.body.clientWidth) || window.innerWidth || screen.width || 0; } catch (e) { w = 0; }
-    return Math.max(1, Math.min(2, Math.floor(w / 12) / 10));
-  }
-  function zoom() { return Q.z === '1' ? 1 : Q.z === '2' ? 2 : FIT; }
   function n1(v) { return Math.round(v * 10) / 10; }
-
-  function toSvg(sc, z) {
-    var W = sc.w * sc.cw, H = sc.h * sc.ch, m = Math.min(sc.cw, sc.ch), pre = 'v' + (SVGN++) + 's', defs = {}, dn = 0, body = '', ds = '', pf = '', pd = '';
-    function flush() { if (pd) { body += '<path fill="' + pf + '" d="' + pd + '"/>'; pd = ''; pf = ''; } }
-    each(sc.it, function (o) {
-      var q, key, id, sp, byCol, order, k;
-      if (o.t === 'r') {
-        /* consecutive rectangles of one colour become a single path */
-        if (pf !== o.f) { flush(); pf = o.f; }
-        pd += 'M' + n1(o.x * sc.cw) + ' ' + n1(o.y * sc.ch) + 'h' + n1(o.w * sc.cw) + 'v' + n1(o.h * sc.ch) + 'h' + n1(-o.w * sc.cw) + 'z';
-        return;
-      }
-      flush();
-      if (o.t === 'c') {
-        body += '<circle cx="' + n1(o.x * sc.cw) + '" cy="' + n1(o.y * sc.ch) + '" r="' + n1(o.r * m) + '" fill="' + o.f + '"/>';
-      } else if (o.t === 'p') {
-        q = [];
-        each(o.p, function (pt) { q.push(n1(pt[0] * sc.cw) + ',' + n1(pt[1] * sc.ch)); });
-        body += '<polygon points="' + q.join(' ') + '" fill="' + o.f + '"/>';
-      } else if (o.t === 'x') {
-        body += '<text x="' + n1(o.x * sc.cw) + '" y="' + n1(o.y * sc.ch + o.z * 0.35) + '" font-size="' + o.z +
-          '" font-family="sans-serif" font-weight="bold" text-anchor="middle" fill="' + o.f + '">' + esc(o.s) + '</text>';
-      } else if (o.t === 's') {
-        key = o.n + '|' + (o.fx ? 1 : 0) + '|' + (o.ro || 0) + '|' + (o.sw || '') + '|' + o.k;
-        id = defs[key];
-        if (!id) {
-          id = pre + (dn++); defs[key] = id; sp = sprite(o.n, o.fx, o.ro, o.sw); k = o.k;
-          byCol = {}; order = [];
-          each(sp.runs, function (r) {
-            if (!byCol[r[3]]) { byCol[r[3]] = ''; order.push(r[3]); }
-            byCol[r[3]] += 'M' + r[0] * k + ' ' + r[1] * k + 'h' + r[2] * k + 'v' + k + 'h-' + r[2] * k + 'z';
-          });
-          ds += '<g id="' + id + '" shape-rendering="crispEdges">';
-          each(order, function (c) { ds += '<path fill="' + c + '" d="' + byCol[c] + '"/>'; });
-          ds += '</g>';
-        }
-        body += '<use xlink:href="#' + id + '" x="' + n1(o.x * sc.cw) + '" y="' + n1(o.y * sc.ch) + '"/>';
-      }
-    });
-    flush();
-    return '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="' + n1(W * z) + '" height="' + n1(H * z) +
-      '" viewBox="0 0 ' + W + ' ' + H + '">' + (ds ? '<defs>' + ds + '</defs>' : '') + '<rect width="' + W + '" height="' + H + '" fill="' + sc.bg + '"/>' + body + '</svg>';
+  function R(x, y, w, h, f, extra) { return '<rect x="' + n1(x) + '" y="' + n1(y) + '" width="' + n1(w) + '" height="' + n1(h) + '" fill="' + f + '"' + (extra || '') + '/>'; }
+  function C(x, y, r, f, extra) { return '<circle cx="' + n1(x) + '" cy="' + n1(y) + '" r="' + n1(r) + '" fill="' + f + '"' + (extra || '') + '/>'; }
+  function P(d, f, extra) { return '<path d="' + d + '" fill="' + f + '"' + (extra || '') + '/>'; }
+  function T(x, y, s, size, f, anchor) {
+    return '<text x="' + n1(x) + '" y="' + n1(y) + '" font-size="' + size + '" font-family="sans-serif" font-weight="bold" text-anchor="' + (anchor || 'middle') + '" fill="' + f + '">' + esc(s) + '</text>';
   }
+  function GH(x, y, w, h, c) { return R(x, y, w, h, 'none', ' stroke="' + c + '" stroke-width="0.6" stroke-dasharray="1.2 0.8"'); }
 
-  function toTable(sc, z) {
-    var grid = [], x, y, row, cell, h, m = Math.min(sc.cw, sc.ch);
-    for (y = 0; y < sc.h; y++) { row = []; for (x = 0; x < sc.w; x++) { row.push({ f: sc.bg, d: '', s: '' }); } grid.push(row); }
-    function setF(gx, gy, f) { if (grid[gy] && grid[gy][gx]) { grid[gy][gx].f = f; grid[gy][gx].d = ''; } }
-    each(sc.it, function (o) {
-      var minx, maxx, miny, maxy, cx, cy, sp, x2, y2;
-      if (o.t === 'x') {
-        y = Math.floor(o.y); x = Math.floor(o.x);
-        if (grid[y] && grid[y][x]) { grid[y][x].s = o.s; grid[y][x].tc = o.f; }
-        return;
-      }
-      if (o.t === 's') {
-        sp = sprite(o.n, o.fx, o.ro, o.sw);
-        x2 = o.x + sp.w * o.k / sc.cw; y2 = o.y + sp.h * o.k / sc.ch;
-        for (y = Math.floor(o.y + 0.01); y < y2 - 0.01; y++) { for (x = Math.floor(o.x + 0.01); x < x2 - 0.01; x++) { setF(x, y, sp.dom); } }
-        return;
-      }
-      for (y = 0; y < sc.h; y++) {
-        for (x = 0; x < sc.w; x++) {
-          cx = x + 0.5; cy = y + 0.5;
-          if (o.t === 'r') {
-            if (cx >= o.x && cx <= o.x + o.w && cy >= o.y && cy <= o.y + o.h) { setF(x, y, o.f); }
-          } else if (o.t === 'c') {
-            if (Math.floor(o.x) === x && Math.floor(o.y) === y) {
-              if (o.r < 0.3) { grid[y][x].d = o.f; } else { setF(x, y, o.f); }
-            } else {
-              var dx = (cx - o.x) * sc.cw, dy = (cy - o.y) * sc.ch;
-              if (dx * dx + dy * dy <= o.r * m * o.r * m) { setF(x, y, o.f); }
-            }
-          } else if (o.t === 'p') {
-            minx = 99; maxx = -99; miny = 99; maxy = -99;
-            each(o.p, function (pt) {
-              if (pt[0] < minx) { minx = pt[0]; } if (pt[0] > maxx) { maxx = pt[0]; }
-              if (pt[1] < miny) { miny = pt[1]; } if (pt[1] > maxy) { maxy = pt[1]; }
-            });
-            if (cx >= minx && cx <= maxx && cy >= miny && cy <= maxy) { setF(x, y, o.f); }
-          }
-        }
-      }
-    });
-    h = '<table cellspacing="0" cellpadding="0" border="0" style="border-collapse:collapse;margin:0 auto">';
-    for (y = 0; y < sc.h; y++) {
-      h += '<tr>';
-      for (x = 0; x < sc.w; x++) {
-        cell = grid[y][x];
-        h += '<td width="' + Math.round(sc.cw * z) + '" height="' + Math.round(sc.ch * z) + '" bgcolor="' + cell.f + '" align="center" style="padding:0;font-size:8px;color:' + (cell.tc || '#ffffff') + '">';
-        if (cell.s) { h += esc(cell.s); }
-        else if (cell.d) { h += '<div style="width:' + (3 * z) + 'px;height:' + (3 * z) + 'px;background:' + cell.d + ';margin:0 auto"></div>'; }
-        h += '</td>';
-      }
-      h += '</tr>';
-    }
-    return h + '</table>';
-  }
-
-  function pic(sc, z, cls) {
-    var mode = Q.r || 'svg', out;
-    if (z === undefined) { z = zoom(); }
-    if (mode === 'tbl') { out = toTable(sc, z); }
-    else {
-      out = toSvg(sc, z);
-      if (mode === 'img') {
-        out = '<img src="data:image/svg+xml;charset=utf-8,' + encodeURIComponent(out) + '" width="' + n1(sc.w * sc.cw * z) + '" height="' + n1(sc.h * sc.ch * z) + '" alt="">';
-      }
-    }
-    return cls ? '<span class="' + cls + '">' + out + '</span>' : out;
-  }
-
-  /* ---------- links, cookies ---------- */
+  /* ---------- links and cookies ---------- */
   function parseQ(search) {
     var q = {}, s = (search || '').replace(/^\?/, '');
     if (!s) { return q; }
@@ -237,883 +71,799 @@ var V = (function () {
   }
   function url(o) {
     var parts = [], k;
-    if (o.r === undefined && Q.r) { o.r = Q.r; }
     if (o.z === undefined && Q.z) { o.z = Q.z; }
-    for (k in o) {
-      if (o.hasOwnProperty(k) && o[k] !== undefined && o[k] !== null && o[k] !== '') { parts.push(k + '=' + encodeURIComponent(o[k])); }
-    }
+    for (k in o) { if (o.hasOwnProperty(k) && o[k] !== undefined && o[k] !== null && o[k] !== '') { parts.push(k + '=' + encodeURIComponent(o[k])); } }
     return parts.length ? '?' + parts.join('&') : './';
   }
   function lnk(href, label, cls) { return '<a href="' + esc(href) + '"' + (cls ? ' class="' + cls + '"' : '') + '>' + label + '</a>'; }
-  function getC(k) {
-    try { var m = document.cookie.match(new RegExp('(?:^|; )' + k + '=([^;]*)')); return m ? decodeURIComponent(m[1]) : ''; } catch (e) { return ''; }
-  }
+  function getC(k) { try { var m = document.cookie.match(new RegExp('(?:^|; )' + k + '=([^;]*)')); return m ? decodeURIComponent(m[1]) : ''; } catch (e) { return ''; } }
   function setC(k, v) { try { document.cookie = k + '=' + encodeURIComponent(v) + '; max-age=31536000; path=/'; } catch (e) { } }
 
-  /* ---------- shared drawing for "how to play" pictures ---------- */
-  function helpArrows(sc, hero, sw, lab, act) {
-    var hw = SPR[hero][0].length * 2 / 10, hh = SPR[hero].length * 2 / 10, hx = 6 - hw / 2, hy = 2.5 - hh / 2;
-    S(sc, hx, hy, hero, { k: 2, sw: sw });
-    if (lab.U) { S(sc, 5.65, hy - 0.95, 'arrow'); T(sc, 7.5, hy - 0.6, lab.U, '#1c3e9c', 8); }
-    if (lab.D) { S(sc, 5.65, hy + hh + 0.25, 'arrow', { ro: 2 }); T(sc, 7.5, hy + hh + 0.6, lab.D, '#1c3e9c', 8); }
-    if (lab.L) { S(sc, hx - 0.85, 2.15, 'arrow', { ro: 3 }); T(sc, hx - 1.75, 2.5, lab.L, '#1c3e9c', 8); }
-    if (lab.R) { S(sc, hx + hw + 0.15, 2.15, 'arrow', { ro: 1 }); T(sc, hx + hw + 1.75, 2.5, lab.R, '#1c3e9c', 8); }
-    if (act) { R(sc, 0.2, 3.8, 3.2, 1.05, '#ffd23c'); T(sc, 1.8, 4.32, act, '#101a3a', 8); }
+  /* ---------- page parts ---------- */
+  var KENTE = ['#ffd23c', '#1e8a3c', '#e03c32', '#101a3a'];
+  function kente() { var b = '', i; for (i = 0; i < 24; i++) { b += R(i * 10, 0, 10, 4, KENTE[i % 4]); } var mh = MAXH; MAXH = 999; b = '<div class="kt">' + svg(240, 4, b, PW) + '</div>'; MAXH = mh; return b; }
+  function header(left, right) { return '<div class="hd"><span class="r">' + (right || '') + '</span>' + left + '</div>' + kente(); }
+  function logo() { return '<span class="lg">v</span>play' + (SMALL ? '' : ' Games'); }
+  function icon(id, px) { return svg(24, 24, ICONS[id] || '', px); }
+  function tag(cat) { var c = CATS[cat]; return '<span class="tag" style="background:' + c[1] + '">' + c[0] + '</span>'; }
+  function adSlot() {
+    /* Google AdSense: paste the ad unit here once the domain is approved in
+       AdSense. Keep it below the game controls (Opera Mini highlights the first
+       link on the page, which must be the game, not the ad). */
+    return '<div class="ad">Advertisement</div>';
   }
-
-  /* =====================================================================
-     GAMES. Each game: init enc dec step draw pad top ev info lives score,
-     plus icon(scene 24x24) and help(scene 120x50) and text fields.
-     ===================================================================== */
-  var DX = [0, 1, 0, -1], DY = [-1, 0, 1, 0];
-  var DIRS = { U: 0, R: 1, D: 2, L: 3 };
-  var PAD4 = [[['U', 'Up']], [['L', 'Left'], ['W', 'Wait', 'a'], ['R', 'Right']], [['D', 'Down']]];
-
-  /* ---------- Chop Chop: maze chase ---------- */
-  G.chop = (function () {
-    var MAZE = ['############', '#o....#...o#', '#.##.##.##.#', '#..........#', '#.##.  .##.#',
-      '#..........#', '#.##.##.##.#', '#o...#....o#', '############'];
-    var W = 12, H = 9, START = [6, 7], PEN = [[5, 4], [6, 4], [5, 4]], FOOD = [];
-    (function () {
-      var x, y, c;
-      for (y = 0; y < H; y++) { for (x = 0; x < W; x++) { c = MAZE[y].charAt(x); if (c === '.' || c === 'o') { FOOD.push([x, y, c === 'o' ? 1 : 0]); } } }
-    }());
-    function wall(x, y) { return x < 0 || y < 0 || x >= W || y >= H || MAZE[y].charAt(x) === '#'; }
-    function eatAt(st, x, y) {
-      for (var i = 0; i < FOOD.length; i++) {
-        if (st.f[i] && FOOD[i][0] === x && FOOD[i][1] === y) {
-          st.f[i] = 0;
-          if (FOOD[i][2]) { st.fr = 8; st.sc += 5; st.m = 1; } else { st.sc += 1; }
-        }
-      }
-    }
-    function reset(st, fresh) {
-      var k;
-      st.px = START[0]; st.py = START[1]; st.pd = 3; st.fr = 0; st.g = [];
-      for (k = 0; k < Math.min(1 + st.lv, 3); k++) { st.g.push([PEN[k][0], PEN[k][1], 0]); }
-      if (fresh) { st.f = []; for (k = 0; k < FOOD.length; k++) { st.f.push(FOOD[k][0] === START[0] && FOOD[k][1] === START[1] ? 0 : 1); } }
-    }
-    function moveGoat(st, k) {
-      var g = st.g[k], opts = [], d, best = -1, bestV, v, keep = [], chase;
-      for (d = 0; d < 4; d++) { if (!wall(g[0] + DX[d], g[1] + DY[d])) { opts.push(d); } }
-      if (opts.length > 1) { each(opts, function (o) { if ((o + 2) % 4 !== g[2]) { keep.push(o); } }); if (keep.length) { opts = keep; } }
-      chase = st.fr > 0 ? -1 : (k === 0 ? 1 : (k === 1 ? 0 : (ri(st, 2) ? 1 : 0)));
-      if (chase === 0) { best = opts[ri(st, opts.length)]; } else {
-        each(opts, function (o) {
-          v = Math.abs(g[0] + DX[o] - st.px) + Math.abs(g[1] + DY[o] - st.py);
-          v = chase === 1 ? -v : v;
-          if (best < 0 || v > bestV) { best = o; bestV = v; }
-        });
-      }
-      g[0] += DX[best]; g[1] += DY[best]; g[2] = best;
-    }
-    function collide(st, old, ox, oy) {
-      var k, g, same, swap;
-      for (k = 0; k < st.g.length; k++) {
-        g = st.g[k];
-        same = g[0] === st.px && g[1] === st.py;
-        swap = old && old[k][0] === st.px && old[k][1] === st.py && g[0] === ox && g[1] === oy;
-        if (same || swap) {
-          if (st.fr > 0) { st.sc += 20; st.m = 2; g[0] = PEN[k][0]; g[1] = PEN[k][1]; g[2] = 0; }
-          else { st.lives--; st.m = 3; if (st.lives <= 0) { st.o = 1; st.m = 5; } else { reset(st, false); } return true; }
-        }
-      }
-      return false;
-    }
-    return {
-      name: 'Chop Chop', cat: 'arcade', mins: '3 min', short: 'Eat groundnuts, dodge the goats',
-      blurb: 'Eat every groundnut in the market maze before the hungry goats catch you.',
-      lines: [['Up, Down, Left, Right', 'move one square'], ['Wait', 'stay still while the goats move'], ['Red pepper', 'goats turn blue: catch them for 20']],
-      tip: 'Goats move each time you do, so plan two steps ahead.',
-      init: function (sd) { var st = { lives: 3, sc: 0, lv: 1, r: sd, o: 0, m: 0 }; reset(st, true); return st; },
-      enc: function (st) {
-        return [b36(st.px) + b36(st.py) + st.pd, ptsEnc(st.g), b36(st.fr), st.lives, b36(st.sc), b36(st.lv), b36(st.r), st.o, st.m, bitsEnc(st.f)].join('.');
-      },
-      dec: function (s) {
-        var a = s.split('.');
-        return {
-          px: p36(a[0].charAt(0)), py: p36(a[0].charAt(1)), pd: num(a[0].charAt(2)), g: pts(a[1], 3), fr: p36(a[2]), lives: num(a[3]),
-          sc: p36(a[4]), lv: p36(a[5]), r: p36(a[6]), o: num(a[7]), m: num(a[8]), f: bitsDec(a[9], FOOD.length)
-        };
-      },
-      step: function (st, a) {
-        var ox = st.px, oy = st.py, d = DIRS[a], old = [], k, left = 0;
-        st.m = 0;
-        if (d !== undefined) { st.pd = d; if (!wall(st.px + DX[d], st.py + DY[d])) { st.px += DX[d]; st.py += DY[d]; } }
-        eatAt(st, st.px, st.py);
-        if (collide(st, null)) { return; }
-        for (k = 0; k < st.g.length; k++) { old.push([st.g[k][0], st.g[k][1]]); moveGoat(st, k); }
-        if (collide(st, old, ox, oy)) { return; }
-        if (st.fr > 0) { st.fr--; }
-        for (k = 0; k < st.f.length; k++) { left += st.f[k]; }
-        if (!left) { st.lv++; st.sc += 50; reset(st, true); st.m = 4; }
-      },
-      draw: function (st) {
-        var sc = scene(W, H, 10, 10, '#101a3a'), x, y, i;
-        for (y = 0; y < H; y++) {
-          for (x = 0; x < W; x++) {
-            if (MAZE[y].charAt(x) === '#') { R(sc, x, y, 1, 1, '#22a6a0'); }
-          }
-        }
-        for (y = 0; y < H; y++) { for (x = 0; x < W; x++) { if (MAZE[y].charAt(x) === '#') { R(sc, x + 0.15, y + 0.15, 0.85, 0.85, '#126a66'); } } }
-        for (i = 0; i < FOOD.length; i++) { if (st.f[i]) { S(sc, FOOD[i][0], FOOD[i][1], FOOD[i][2] ? 'chop_pep' : 'chop_nut'); } }
-        each(st.g, function (g) { S(sc, g[0], g[1], 'chop_goat', { sw: st.fr > 0 ? 'w=c' : '' }); });
-        S(sc, st.px, st.py, 'chop_hero', { fx: st.pd === 3 });
-        return sc;
-      },
-      icon: function (sc) { R(sc, 0, 0, 1, 0.17, '#22a6a0'); R(sc, 0, 0.83, 1, 0.17, '#22a6a0'); S(sc, 0.08, 0.08, 'chop_hero', { k: 2 }); },
-      help: function (sc) { helpArrows(sc, 'chop_hero', '', { U: 'Up', D: 'Down', L: 'Left', R: 'Right' }, 'Wait'); S(sc, 10.2, 0.4, 'chop_goat'); S(sc, 10.2, 3.6, 'chop_pep'); },
-      pad: function () { return PAD4; },
-      top: function (st) { return 'Score ' + st.sc; },
-      ev: function (st) { return ['', 'Pepper! Chase the goats', 'Goat caught! +20', 'Caught by a goat!', 'Market cleared! +50', 'No lives left'][st.m]; },
-      info: function (st) { return 'Level ' + st.lv + (st.fr ? ' &middot; Goats scared for ' + st.fr : ''); },
-      lives: function (st) { return [st.lives, 3]; },
-      score: function (st) { return st.sc; }
-    };
-  }());
-
-  /* ---------- Harmattan Skies: step shooter ---------- */
-  G.harm = (function () {
-    var W = 8, STARS = [[0.5, 1.2], [2.3, 4.6], [4.7, 2.1], [6.6, 5.4], [7.4, 0.6], [3.4, 6.8], [1.2, 7.3], [5.8, 7.9], [6.1, 3.3], [1.7, 2.8]];
-    var ROWC = ['m', 'b', 'y'];
-    function fleet(st, rows) {
-      st.fl = [];
-      for (var i = 0; i < 18; i++) { st.fl.push(Math.floor(i / 6) < rows ? 1 : 0); }
-      st.fx = 1; st.fy = 0; st.fd = 0; st.b = [];
-    }
-    function range(st) {
-      var mn = 9, mx = -1, lo = -1, i;
-      for (i = 0; i < 18; i++) {
-        if (st.fl[i]) { if (i % 6 < mn) { mn = i % 6; } if (i % 6 > mx) { mx = i % 6; } if (Math.floor(i / 6) > lo) { lo = Math.floor(i / 6); } }
-      }
-      return [mn, mx, lo];
-    }
-    function hitPlayer(st) { st.lives--; st.b = []; st.m = 3; if (st.lives <= 0) { st.o = 1; st.m = 5; } }
-    return {
-      name: 'Harmattan Skies', cat: 'arcade', mins: '3 min', short: 'Blast the alien drones',
-      blurb: 'Defend the savanna. Clear each wave of alien drones before they land.',
-      lines: [['Left, Right', 'move one column'], ['Fire', 'hit the lowest drone above you'], ['Bombs', 'move out from under them']],
-      tip: 'Top-row drones score 30, so clear a column from the bottom up.',
-      init: function (sd) { var st = { px: 3, lives: 3, sc: 0, wv: 1, t: 0, r: sd, o: 0, m: 0 }; fleet(st, 2); return st; },
-      enc: function (st) {
-        return [bitsEnc(st.fl), b36(st.fx + 6) + b36(st.fy) + st.fd + b36(st.px), ptsEnc(st.b), st.lives, b36(st.sc), b36(st.wv), b36(st.t % 36), b36(st.r), st.o, st.m].join('.');
-      },
-      dec: function (s) {
-        var a = s.split('.');
-        return {
-          fl: bitsDec(a[0], 18), fx: p36(a[1].charAt(0)) - 6, fy: p36(a[1].charAt(1)), fd: num(a[1].charAt(2)), px: p36(a[1].charAt(3)),
-          b: pts(a[2], 2), lives: num(a[3]), sc: p36(a[4]), wv: p36(a[5]), t: p36(a[6]), r: p36(a[7]), o: num(a[8]), m: num(a[9])
-        };
-      },
-      step: function (st, a) {
-        var c, rr, hit, nb = [], rg, nx, alive = [], i;
-        st.m = 0;
-        if (a === 'L' && st.px > 0) { st.px--; }
-        else if (a === 'R' && st.px < W - 1) { st.px++; }
-        else if (a === 'F') {
-          c = st.px - st.fx; hit = false;
-          if (c >= 0 && c < 6) { for (rr = 2; rr >= 0; rr--) { if (st.fl[rr * 6 + c]) { st.fl[rr * 6 + c] = 0; st.sc += (3 - rr) * 10; hit = true; break; } } }
-          st.m = hit ? 1 : 2;
-        }
-        each(st.b, function (b) { b[1]++; if (b[1] <= 8) { nb.push(b); } });
-        st.b = nb;
-        for (i = 0; i < st.b.length; i++) { if (st.b[i][1] === 8 && st.b[i][0] === st.px) { hitPlayer(st); return; } }
-        nb = [];
-        each(st.b, function (b) { if (b[1] < 8) { nb.push(b); } });
-        st.b = nb;
-        rg = range(st);
-        if (rg[2] < 0) { st.wv++; st.sc += 50; fleet(st, 3); st.m = 4; return; }
-        if (st.t % (st.wv >= 3 ? 1 : 2) === 0) {
-          nx = st.fx + (st.fd ? -1 : 1);
-          if (nx + rg[0] < 0 || nx + rg[1] > W - 1) { st.fy++; st.fd = 1 - st.fd; } else { st.fx = nx; }
-        }
-        st.t++;
-        if (st.fy + rg[2] >= 7) { st.o = 1; st.m = 6; return; }
-        if (st.b.length < 3 && ri(st, 100) < 20 + 8 * st.wv) {
-          for (i = 0; i < 6; i++) { if (st.fl[i] || st.fl[6 + i] || st.fl[12 + i]) { alive.push(i); } }
-          c = alive[ri(st, alive.length)];
-          for (rr = 2; rr >= 0; rr--) { if (st.fl[rr * 6 + c]) { break; } }
-          st.b.push([st.fx + c, st.fy + rr + 1]);
-        }
-      },
-      draw: function (st) {
-        var sc = scene(W, 9, 15, 10, '#101a3a'), i;
-        each(STARS, function (s, k) { R(sc, s[0], s[1], 0.07, 0.1, k % 3 ? '#9aa0a8' : '#ffffff'); });
-        R(sc, 0, 8.75, 8, 0.25, '#d9b77a');
-        for (i = 0; i < 18; i++) { if (st.fl[i]) { S(sc, st.fx + i % 6, st.fy + Math.floor(i / 6), 'harm_drone', { sw: 'X=' + ROWC[Math.floor(i / 6)] }); } }
-        each(st.b, function (b) { S(sc, b[0], b[1], 'harm_bomb'); });
-        S(sc, st.px, 8, 'harm_ship');
-        return sc;
-      },
-      icon: function (sc) { S(sc, 0.04, 0.05, 'harm_drone', { sw: 'X=m' }); S(sc, 0.18, 0.55, 'harm_ship'); },
-      help: function (sc) {
-        S(sc, 2.5, 0.1, 'harm_drone', { sw: 'X=m' }); S(sc, 4.0, 0.1, 'harm_drone', { sw: 'X=b' }); S(sc, 5.5, 0.1, 'harm_drone', { sw: 'X=y' });
-        S(sc, 4.0, 1.4, 'harm_bomb'); S(sc, 4.0, 3.0, 'harm_ship');
-        S(sc, 3.0, 3.15, 'arrow', { ro: 3 }); T(sc, 1.6, 3.5, 'Left', '#1c3e9c', 8);
-        S(sc, 5.7, 3.15, 'arrow', { ro: 1 }); T(sc, 7.6, 3.5, 'Right', '#1c3e9c', 8);
-        R(sc, 8.8, 1.2, 3, 1.1, '#ffd23c'); T(sc, 10.3, 1.75, 'Fire', '#101a3a', 8);
-      },
-      pad: function () { return [[['L', 'Left'], ['F', 'Fire', 'a'], ['R', 'Right']]]; },
-      top: function (st) { return 'Score ' + st.sc; },
-      ev: function (st) { return ['', 'Hit!', 'Missed', 'Hit by a bomb!', 'Wave cleared! +50', 'No lives left', 'The drones landed'][st.m]; },
-      info: function (st) { return 'Wave ' + st.wv; },
-      lives: function (st) { return [st.lives, 3]; },
-      score: function (st) { return st.sc; }
-    };
-  }());
-
-  /* ---------- Road Crossa: road crossing ---------- */
-  G.road = (function () {
-    var W = 8, LANES = [1, 2, 3, 5, 6, 7], LCOL = ['y', 'r', 'b', 'o', 'y', 'r'];
-    var T1 = ['11000000', '11100000', '10010000', '11000100'];
-    var T2 = ['11011000', '11100110', '11001100', '10101000', '11100100'];
-    var T3 = ['11101100', '11011010', '11110110', '11101010'];
-    function laneIdx(y) { for (var i = 0; i < LANES.length; i++) { if (LANES[i] === y) { return i; } } return -1; }
-    function gen(st) {
-      var set = st.lv >= 4 ? T3 : (st.lv >= 2 ? T2 : T1), i, t, rot;
-      st.k = [];
-      for (i = 0; i < 6; i++) { t = set[ri(st, set.length)]; rot = ri(st, 8); st.k.push(parseInt(t.substr(rot) + t.substr(0, rot), 2)); }
-    }
-    function occ(st, x, y) {
-      var li = laneIdx(y), dir, idx;
-      if (li < 0) { return false; }
-      dir = li % 2 ? -1 : 1;
-      idx = (((x - dir * st.t) % 8) + 8) % 8;
-      return ((st.k[li] >> idx) & 1) === 1;
-    }
-    function splat(st) { st.lives--; st.px = 3; st.py = 8; st.m = 2; if (st.lives <= 0) { st.o = 1; st.m = 4; } }
-    return {
-      name: 'Road Crossa', cat: 'arcade', mins: '2 min', short: 'Help the chicken cross',
-      blurb: 'Rush hour! Get the chicken across six lanes of buses and cars, five times.',
-      lines: [['Up', 'step forward'], ['Down, Left, Right', 'step back or sideways'], ['Wait', 'let the traffic pass']],
-      tip: 'Each lane moves one way. Watch a lane before you step in.',
-      init: function (sd) { var st = { px: 3, py: 8, t: 0, cr: 0, lives: 3, sc: 0, lv: 1, r: sd, o: 0, m: 0 }; gen(st); return st; },
-      enc: function (st) {
-        var ks = '', i, h;
-        for (i = 0; i < 6; i++) { h = st.k[i].toString(16); ks += h.length < 2 ? '0' + h : h; }
-        return [b36(st.px) + b36(st.py) + st.t + st.cr, ks, st.lives, b36(st.sc), b36(st.lv), b36(st.r), st.o, st.m].join('.');
-      },
-      dec: function (s) {
-        var a = s.split('.'), k = [], i;
-        for (i = 0; i < 6; i++) { k.push(parseInt(a[1].substr(i * 2, 2), 16) || 0); }
-        return {
-          px: p36(a[0].charAt(0)), py: p36(a[0].charAt(1)), t: num(a[0].charAt(2)), cr: num(a[0].charAt(3)), k: k,
-          lives: num(a[2]), sc: p36(a[3]), lv: p36(a[4]), r: p36(a[5]), o: num(a[6]), m: num(a[7])
-        };
-      },
-      step: function (st, a) {
-        st.m = 0;
-        if (a === 'U' && st.py > 0) { st.py--; }
-        else if (a === 'D' && st.py < 8) { st.py++; }
-        else if (a === 'L' && st.px > 0) { st.px--; }
-        else if (a === 'R' && st.px < W - 1) { st.px++; }
-        if (occ(st, st.px, st.py)) { splat(st); return; }
-        st.t = (st.t + 1) % 8;
-        if (occ(st, st.px, st.py)) { splat(st); return; }
-        if (st.py === 0) {
-          st.cr++; st.sc += 10 * st.lv; st.px = 3; st.py = 8;
-          if (st.cr >= 5) { st.lv++; st.cr = 0; st.sc += 50; gen(st); st.m = 3; } else { st.m = 1; }
-        }
-      },
-      draw: function (st) {
-        var sc = scene(W, 9, 15, 10, '#1e8a3c'), i, x, y;
-        for (x = 0; x < 16; x++) { R(sc, x * 0.5, 0, 0.5, 0.5, x % 2 ? '#141414' : '#ffffff'); R(sc, x * 0.5, 0.5, 0.5, 0.5, x % 2 ? '#ffffff' : '#141414'); }
-        R(sc, 0, 4, 8, 1, '#5fd35a');
-        each([[0.6, 4.4], [3.2, 4.6], [6.3, 4.3]], function (f) { R(sc, f[0], f[1], 0.12, 0.2, '#ffd23c'); });
-        for (i = 0; i < 6; i++) {
-          y = LANES[i];
-          R(sc, 0, y, 8, 1, '#4a4f58');
-          for (x = 0; x < 8; x++) {
-            if (occ(st, x, y)) { S(sc, x, y, 'road_car', { fx: i % 2 === 1, sw: 'X=' + LCOL[i] }); }
-            else if (x % 2 === 0) { R(sc, x + 0.3, y + 0.92, 0.4, 0.08, '#9aa0a8'); }
-          }
-        }
-        S(sc, st.px, st.py, 'road_chick');
-        return sc;
-      },
-      icon: function (sc) { R(sc, 0, 0, 1, 0.55, '#4a4f58'); R(sc, 0, 0.55, 1, 0.45, '#1e8a3c'); S(sc, 0.0, 0.08, 'road_car', { sw: 'X=y' }); S(sc, 0.2, 0.55, 'road_chick'); },
-      help: function (sc) {
-        R(sc, 0, 0, 12, 1.3, '#4a4f58'); S(sc, 8.5, 0.15, 'road_car', { sw: 'X=r' }); S(sc, 0.4, 0.15, 'road_car', { sw: 'X=b' });
-        helpArrows(sc, 'road_chick', '', { U: 'Up', D: 'Down', L: 'Left', R: 'Right' }, 'Wait');
-      },
-      pad: function () { return PAD4; },
-      top: function (st) { return 'Score ' + st.sc; },
-      ev: function (st) { return ['', 'Safe! Go again', 'Splat!', 'Level up! +50', 'No lives left'][st.m]; },
-      info: function (st) { return 'Crossed ' + st.cr + ' of 5 &middot; Level ' + st.lv; },
-      lives: function (st) { return [st.lives, 3]; },
-      score: function (st) { return st.sc; }
-    };
-  }());
-
-  /* ---------- Coconut Climb: ladder climber ---------- */
-  G.coco = (function () {
-    var W = 12, FLOORS = [8, 6, 4, 2], LAD = [[9, 6], [2, 4], [8, 2]], GOAL = [3, 2], SPAWN = [2, 2];
-    function isFloor(y) { return y === 8 || y === 6 || y === 4 || y === 2; }
-    function ladder(x, top) { for (var i = 0; i < LAD.length; i++) { if (LAD[i][0] === x && LAD[i][1] === top) { return true; } } return false; }
-    function hitAt(st, x, y) { for (var i = 0; i < st.c.length; i++) { if (st.c[i][0] === x && st.c[i][1] === y) { return true; } } return false; }
-    function home(st) { st.px = 0; st.py = 8; st.fd = 1; st.c = []; st.t = 0; }
-    function ouch(st) { st.lives--; st.m = 2; home(st); if (st.lives <= 0) { st.o = 1; st.m = 4; } }
-    return {
-      name: 'Coconut Climb', cat: 'arcade', mins: '3 min', short: 'Climb up, jump the coconuts',
-      blurb: 'The hornbill stole your football! Climb the palm-wood scaffold and win it back.',
-      lines: [['Left, Right', 'walk'], ['Up, Down', 'climb a ladder'], ['Jump', 'leap two squares over a coconut']],
-      tip: 'Ladders are safe: coconuts only roll along the planks.',
-      init: function (sd) { var st = { lives: 3, sc: 0, lv: 1, r: sd, o: 0, m: 0 }; home(st); return st; },
-      enc: function (st) {
-        var cs = '';
-        each(st.c, function (c) { cs += b36(c[0]) + b36(c[1]) + (c[2] > 0 ? 1 : 0); });
-        return [b36(st.px) + b36(st.py) + (st.fd > 0 ? 1 : 0), cs, st.lives, b36(st.sc), b36(st.lv), b36(st.t), b36(st.r), st.o, st.m].join('.');
-      },
-      dec: function (s) {
-        var a = s.split('.'), c = pts(a[1], 3);
-        each(c, function (q) { q[2] = q[2] ? 1 : -1; });
-        return {
-          px: p36(a[0].charAt(0)), py: p36(a[0].charAt(1)), fd: a[0].charAt(2) === '1' ? 1 : -1, c: c,
-          lives: num(a[2]), sc: p36(a[3]), lv: p36(a[4]), t: p36(a[5]), r: p36(a[6]), o: num(a[7]), m: num(a[8])
-        };
-      },
-      step: function (st, a) {
-        var ox = st.px, oy = st.py, nx, old = [], keep = [], i, every;
-        st.m = 0;
-        if ((a === 'L' || a === 'R') && isFloor(st.py)) {
-          st.fd = a === 'L' ? -1 : 1; nx = st.px + st.fd;
-          if (nx >= 0 && nx < W) { st.px = nx; }
-        } else if (a === 'U') {
-          if (isFloor(st.py) && ladder(st.px, st.py - 2)) { st.py--; } else if (!isFloor(st.py)) { st.py--; }
-        } else if (a === 'D') {
-          if (isFloor(st.py) && st.py < 8 && ladder(st.px, st.py)) { st.py++; } else if (!isFloor(st.py)) { st.py++; }
-        } else if (a === 'J' && isFloor(st.py)) {
-          nx = st.px + 2 * st.fd;
-          if (nx >= 0 && nx < W) { if (hitAt(st, st.px + st.fd, st.py)) { st.sc += 5; st.m = 1; } st.px = nx; }
-        }
-        if (hitAt(st, st.px, st.py)) { ouch(st); return; }
-        if (st.px === GOAL[0] && st.py === GOAL[1]) { st.sc += 50 * st.lv; st.lv++; st.m = 3; home(st); return; }
-        each(st.c, function (c) {
-          old.push([c[0], c[1]]);
-          nx = c[0] + c[2];
-          if (nx < 0 || nx >= W) { c[1] += 2; c[2] = -c[2]; } else { c[0] = nx; }
-        });
-        for (i = 0; i < st.c.length; i++) { if (st.c[i][1] <= 8) { keep.push(st.c[i]); } else { old.splice(keep.length, 1); } }
-        st.c = keep;
-        st.t = (st.t + 1) % 36;
-        every = Math.max(2, 5 - st.lv);
-        if (st.t % every === 0 && st.c.length < 5) { st.c.push([SPAWN[0], SPAWN[1], 1]); old.push([-1, -1]); }
-        for (i = 0; i < st.c.length; i++) {
-          if ((st.c[i][0] === st.px && st.c[i][1] === st.py) || (old[i][0] === st.px && old[i][1] === st.py && st.c[i][0] === ox && st.c[i][1] === oy)) { ouch(st); return; }
-        }
-      },
-      draw: function (st) {
-        var sc = scene(W, 9, 10, 10, '#8fd8ff'), y;
-        C(sc, 11.2, 0.8, 0.55, '#ffd23c');
-        R(sc, 5.2, 0.5, 1.6, 0.35, '#ffffff'); R(sc, 5.5, 0.3, 0.9, 0.3, '#ffffff');
-        R(sc, 8.0, 1.1, 1.3, 0.3, '#ffffff');
-        each(FLOORS, function (f) { R(sc, 0, f + 0.8, 12, 0.2, '#8a5a2e'); R(sc, 0, f + 0.95, 12, 0.05, '#55361a'); });
-        each(LAD, function (l) {
-          R(sc, l[0] + 0.15, l[1] + 0.8, 0.12, 2.1, '#55361a'); R(sc, l[0] + 0.73, l[1] + 0.8, 0.12, 2.1, '#55361a');
-          for (y = l[1] + 1.1; y < l[1] + 2.8; y += 0.45) { R(sc, l[0] + 0.15, y, 0.7, 0.1, '#55361a'); }
-        });
-        S(sc, 0, 1.2, 'coco_bird');
-        S(sc, GOAL[0], GOAL[1], 'coco_ball');
-        each(st.c, function (c) { S(sc, c[0], c[1], 'coco_nut'); });
-        S(sc, st.px, st.py, 'coco_hero', { fx: st.fd < 0 });
-        return sc;
-      },
-      icon: function (sc) { R(sc, 0, 0.8, 1, 0.2, '#8a5a2e'); S(sc, 0.08, 0.0, 'coco_nut', { k: 2 }); },
-      help: function (sc) {
-        R(sc, 0, 4.85, 12, 0.15, '#8a5a2e'); S(sc, 10.3, 3.0, 'coco_nut');
-        helpArrows(sc, 'coco_hero', '', { U: 'Up', D: 'Down', L: 'Left', R: 'Right' }, 'Jump');
-      },
-      pad: function () { return [[['U', 'Up']], [['L', 'Left'], ['J', 'Jump', 'a'], ['R', 'Right']], [['D', 'Down']]]; },
-      top: function (st) { return 'Score ' + st.sc; },
-      ev: function (st) { return ['', 'Nice jump! +5', 'Bonk! A coconut got you', 'Football back! Next level', 'No lives left'][st.m]; },
-      info: function (st) { return 'Level ' + st.lv; },
-      lives: function (st) { return [st.lives, 3]; },
-      score: function (st) { return st.sc; }
-    };
-  }());
-
-  /* ---------- Mamba Munch: snake ---------- */
-  G.mamba = (function () {
-    var W = 12, H = 9, TUFTS = [[1.2, 1.4], [8.4, 2.2], [3.6, 6.3], [10.2, 7.1], [6.5, 4.6], [2.1, 3.8]];
-    function onBody(st, x, y, upto) { for (var i = 0; i < upto; i++) { if (st.b[i][0] === x && st.b[i][1] === y) { return true; } } return false; }
-    function egg(st) {
-      var free = [], x, y;
-      for (y = 0; y < H; y++) { for (x = 0; x < W; x++) { if (!onBody(st, x, y, st.b.length)) { free.push([x, y]); } } }
-      if (!free.length) { st.e = [35, 35]; st.o = 1; st.m = 4; return; }
-      st.e = free[ri(st, free.length)];
-    }
-    return {
-      name: 'Mamba Munch', cat: 'arcade', mins: '3 min', short: 'Grow the snake, eat the eggs',
-      blurb: 'Steer the hungry mamba to every egg. It only moves when you press, so think ahead.',
-      lines: [['Up, Down, Left, Right', 'turn and move one square'], ['Go', 'keep going straight'], ['Walls and tail', 'touch them and it is over']],
-      tip: 'Before you eat an egg, make sure there is a way out.',
-      init: function (sd) { var st = { b: [[5, 4], [4, 4], [3, 4]], d: 1, sc: 0, r: sd, o: 0, m: 0 }; egg(st); return st; },
-      enc: function (st) {
-        var s = b36(st.b[0][0]) + b36(st.b[0][1]), i, k;
-        for (i = 1; i < st.b.length; i++) {
-          for (k = 0; k < 4; k++) { if (st.b[i - 1][0] + DX[k] === st.b[i][0] && st.b[i - 1][1] + DY[k] === st.b[i][1]) { s += k; break; } }
-        }
-        return [s, st.d, b36(st.e[0]) + b36(st.e[1]), b36(st.sc), b36(st.r), st.o, st.m].join('.');
-      },
-      dec: function (s) {
-        var a = s.split('.'), b = [[p36(a[0].charAt(0)), p36(a[0].charAt(1))]], i, k, prev;
-        for (i = 2; i < a[0].length; i++) { k = num(a[0].charAt(i)); prev = b[b.length - 1]; b.push([prev[0] + DX[k], prev[1] + DY[k]]); }
-        return { b: b, d: num(a[1]), e: [p36(a[2].charAt(0)), p36(a[2].charAt(1))], sc: p36(a[3]), r: p36(a[4]), o: num(a[5]), m: num(a[6]) };
-      },
-      step: function (st, a) {
-        var nd = st.d, h, nx, ny, grow;
-        st.m = 0;
-        if (DIRS[a] !== undefined) { nd = DIRS[a]; }
-        if ((nd + 2) % 4 === st.d) { nd = st.d; }
-        st.d = nd;
-        h = st.b[0]; nx = h[0] + DX[nd]; ny = h[1] + DY[nd];
-        if (nx < 0 || ny < 0 || nx >= W || ny >= H) { st.o = 1; st.m = 2; return; }
-        grow = st.e[0] === nx && st.e[1] === ny;
-        if (onBody(st, nx, ny, grow ? st.b.length : st.b.length - 1)) { st.o = 1; st.m = 3; return; }
-        st.b.unshift([nx, ny]);
-        if (grow) { st.sc++; st.m = 1; egg(st); } else { st.b.pop(); }
-      },
-      draw: function (st) {
-        var sc = scene(W, H, 10, 10, '#f4dca6'), i, h = st.b[0], o = {};
-        each(TUFTS, function (t) { R(sc, t[0], t[1], 0.1, 0.25, '#c99a12'); R(sc, t[0] + 0.2, t[1] + 0.05, 0.1, 0.2, '#c99a12'); });
-        R(sc, 0, 0, 12, 0.08, '#55361a'); R(sc, 0, 8.92, 12, 0.08, '#55361a'); R(sc, 0, 0, 0.08, 9, '#55361a'); R(sc, 11.92, 0, 0.08, 9, '#55361a');
-        if (st.e[0] < W) { S(sc, st.e[0], st.e[1], 'mam_egg'); }
-        for (i = st.b.length - 1; i > 0; i--) { S(sc, st.b[i][0], st.b[i][1], 'mam_body'); }
-        if (st.d === 3) { o.fx = true; } else if (st.d === 0) { o.ro = 3; } else if (st.d === 2) { o.ro = 1; }
-        S(sc, h[0], h[1], 'mam_head', o);
-        return sc;
-      },
-      icon: function (sc) { S(sc, 0.08, 0.08, 'mam_head', { k: 2 }); },
-      help: function (sc) { helpArrows(sc, 'mam_head', '', { U: 'Up', D: 'Down', L: 'Left', R: 'Right' }, 'Go'); S(sc, 10.4, 0.3, 'mam_egg'); },
-      pad: function () { return [[['U', 'Up']], [['L', 'Left'], ['S', 'Go', 'a'], ['R', 'Right']], [['D', 'Down']]]; },
-      top: function (st) { return 'Score ' + st.sc; },
-      ev: function (st) { return ['', 'Yum! +1', 'Ouch, the wall!', 'You bit your tail!', 'You filled the field!'][st.m]; },
-      info: function (st) { return 'Length ' + st.b.length; },
-      lives: function () { return null; },
-      score: function (st) { return st.sc; }
-    };
-  }());
-
-  /* ---------- Penalty King: shoot-out ---------- */
-  G.pen = (function () {
-    var ZX = 1.3, ZY = 1.3, ZW = 9.4 / 3, ZH = 4.7 / 3;
-    var CROWD = ['#e03c32', '#ffd23c', '#3a8ef0', '#ffffff', '#5fd35a', '#ff7fb0'];
-    function zoneCentre(z) { var c = (z - 1) % 3, r = Math.floor((z - 1) / 3); return [ZX + c * ZW + ZW / 2, ZY + r * ZH + ZH / 2]; }
-    function checkEnd(st) {
-      var yk = Math.ceil(st.k / 2), ck = Math.floor(st.k / 2);
-      if (st.k < 10) { if (st.ys > st.cs + (5 - ck) || st.cs > st.ys + (5 - yk)) { st.o = 1; } }
-      else if (st.k % 2 === 0 && st.ys !== st.cs) { st.o = 1; }
-    }
-    return {
-      name: 'Penalty King', cat: 'sports', mins: '2 min', short: 'Win the penalty shoot-out',
-      blurb: 'Five kicks each to decide the cup. Score your penalties, then save theirs.',
-      lines: [['1 to 9', 'pick where to shoot'], ['Left, Mid, Right', 'pick where to dive'], ['Top row', 'hard to save, but can fly over']],
-      tip: 'The keeper guards one column. Mix up your shots.',
-      init: function (sd) { return { k: 0, ys: 0, cs: 0, ls: 0, lk: 1, lw: 0, r: sd, o: 0 }; },
-      enc: function (st) { return [b36(st.k), b36(st.ys) + '-' + b36(st.cs), st.ls + '' + st.lk + st.lw, b36(st.r), st.o].join('.'); },
-      dec: function (s) {
-        var a = s.split('.'), g = a[1].split('-');
-        return { k: p36(a[0]), ys: p36(g[0]), cs: p36(g[1]), ls: num(a[2].charAt(0)), lk: num(a[2].charAt(1)), lw: num(a[2].charAt(2)), r: p36(a[3]), o: num(a[4]) };
-      },
-      step: function (st, a) {
-        var z, col, row, miss, d;
-        if (st.k % 2 === 0) {
-          z = num(a); if (z < 1 || z > 9) { return; }
-          col = (z - 1) % 3; row = Math.floor((z - 1) / 3); d = ri(st, 3);
-          miss = row === 0 && ri(st, 100) < 25;
-          st.lw = miss ? 3 : (d === col ? 2 : 1);
-          if (st.lw === 1) { st.ys++; }
-        } else {
-          if (a.charAt(0) !== 'k') { return; }
-          d = num(a.charAt(1)); z = 1 + ri(st, 9); col = (z - 1) % 3; row = Math.floor((z - 1) / 3);
-          miss = row === 0 && ri(st, 100) < 25;
-          st.lw = miss ? 6 : (d === col ? 5 : 4);
-          if (st.lw === 4) { st.cs++; }
-        }
-        st.ls = z; st.lk = d; st.k++;
-        checkEnd(st);
-      },
-      draw: function (st) {
-        var sc = scene(12, 8, 10, 10, '#8fd8ff'), x, y, i, kx, b, you = st.lw >= 4;
-        R(sc, 0, 0, 12, 0.85, '#5a2a8a');
-        for (i = 0; i < 24; i++) { C(sc, 0.25 + i * 0.5, 0.35 + (i % 2) * 0.2, 0.17, CROWD[i % 6]); }
-        R(sc, 0, 6, 12, 2, '#1e8a3c'); R(sc, 0, 7, 12, 1, '#2fa04a');
-        for (x = 1.3; x < 10.7; x += 1.2) { R(sc, x, 1.3, 0.05, 4.7, '#d6e6f2'); }
-        for (y = 1.3; y < 6; y += 1) { R(sc, 1.3, y, 9.4, 0.05, '#d6e6f2'); }
-        R(sc, 1, 1, 0.3, 5, '#ffffff'); R(sc, 10.7, 1, 0.3, 5, '#ffffff'); R(sc, 1, 1, 10, 0.3, '#ffffff');
-        if (st.k % 2 === 0 && !st.o) { for (i = 1; i <= 9; i++) { b = zoneCentre(i); T(sc, b[0], b[1], i, '#1c3e9c', 10); } }
-        kx = ZX + st.lk * ZW + ZW / 2;
-        S(sc, kx - 0.7, 4.4, 'pen_keeper', { sw: 'X=' + (you ? 'r' : 'y') });
-        if (st.ls) {
-          b = zoneCentre(st.ls);
-          if (st.lw === 3 || st.lw === 6) { b = [b[0], 0.55]; } else if (st.lw === 2 || st.lw === 5) { b = [kx + 0.9, 4.9]; }
-          S(sc, b[0] - 0.35, b[1] - 0.35, 'pen_ball');
-        } else { S(sc, 5.65, 6.9, 'pen_ball'); }
-        return sc;
-      },
-      icon: function (sc) { R(sc, 0.12, 0.15, 0.08, 0.6, '#ffffff'); R(sc, 0.8, 0.15, 0.08, 0.6, '#ffffff'); R(sc, 0.12, 0.15, 0.76, 0.08, '#ffffff'); S(sc, 0.35, 0.55, 'pen_ball'); },
-      help: function (sc) {
-        var i, c, r;
-        R(sc, 0.5, 0.3, 4.6, 0.2, '#9aa0a8'); R(sc, 0.5, 0.3, 0.2, 4.4, '#9aa0a8'); R(sc, 4.9, 0.3, 0.2, 4.4, '#9aa0a8');
-        for (i = 0; i < 9; i++) { c = i % 3; r = Math.floor(i / 3); T(sc, 1.4 + c * 1.4, 1.2 + r * 1.3, i + 1, '#1c3e9c', 9); }
-        S(sc, 6.4, 1.6, 'pen_ball');
-        R(sc, 7.4, 0.5, 4.4, 1.1, '#ffd23c'); T(sc, 9.6, 1.05, 'Shoot: 1-9', '#101a3a', 8);
-        R(sc, 7.4, 2.8, 4.4, 1.1, '#3a8ef0'); T(sc, 9.6, 3.35, 'Save: dive', '#ffffff', 8);
-      },
-      pad: function (st) {
-        if (st.k % 2 === 0) { return [[['1', '1'], ['2', '2'], ['3', '3']], [['4', '4'], ['5', '5'], ['6', '6']], [['7', '7'], ['8', '8'], ['9', '9']]]; }
-        return [[['k0', 'Left'], ['k1', 'Mid', 'a'], ['k2', 'Right']]];
-      },
-      top: function (st) { return 'You ' + st.ys + ' - ' + st.cs + ' CPU'; },
-      ev: function (st) { return ['', 'GOAL!', 'Saved by the keeper', 'Over the bar!', 'They scored', 'You saved it!', 'They missed!'][st.lw]; },
-      info: function (st) {
-        if (st.o) { return st.ys > st.cs ? 'You win the shoot-out!' : 'The computer wins the shoot-out'; }
-        return st.k % 2 === 0 ? 'Your shot: pick a zone' : 'Your save: pick a dive';
-      },
-      lives: function () { return null; },
-      score: function (st) { return st.ys; }
-    };
-  }());
-
-  /* ---------- Oware: mancala against the computer ---------- */
-  G.oware = (function () {
-    var AL = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLM';
-    function own(s, i) { return s === 0 ? i < 6 : i >= 6; }
-    function sideSum(p, s) { var t = 0, i; for (i = s * 6; i < s * 6 + 6; i++) { t += p[i]; } return t; }
-    function sow(p, i) { var n = p[i], j = i; p[i] = 0; while (n > 0) { j = (j + 1) % 12; if (j !== i) { p[j]++; n--; } } return j; }
-    function play(p, i, s) {
-      var q = p.slice(), j = sow(q, i), tmp = q.slice(), cap = 0, k = j, x;
-      while (own(1 - s, k) && (tmp[k] === 2 || tmp[k] === 3)) { cap += tmp[k]; tmp[k] = 0; k = (k + 11) % 12; }
-      if (cap > 0 && sideSum(tmp, 1 - s) === 0) { cap = 0; tmp = q; }
-      for (x = 0; x < 12; x++) { p[x] = tmp[x]; }
-      return cap;
-    }
-    function legal(p, s) {
-      var res = [], empty = sideSum(p, 1 - s) === 0, i, q;
-      for (i = s * 6; i < s * 6 + 6; i++) {
-        if (!p[i]) { continue; }
-        if (empty) { q = p.slice(); sow(q, i); if (sideSum(q, 1 - s) === 0) { continue; } }
-        res.push(i);
-      }
-      return res;
-    }
-    function finish(st) { st.o = 1; st.m = st.ys > st.cs ? 1 : (st.ys < st.cs ? 2 : 3); }
-    function ended(st, side) {
-      if (st.ys > 24 || st.cs > 24 || (st.ys === 24 && st.cs === 24)) { finish(st); return true; }
-      if (!legal(st.p, side).length || st.n > 200) {
-        st.ys += sideSum(st.p, 0); st.cs += sideSum(st.p, 1);
-        for (var i = 0; i < 12; i++) { st.p[i] = 0; }
-        finish(st); return true;
-      }
-      return false;
-    }
-    function cpuMove(st) {
-      var best = -1, bestV = -999;
-      each(legal(st.p, 1), function (mv) {
-        var q = st.p.slice(), c = play(q, mv, 1), reply = 0, v;
-        each(legal(q, 0), function (r) { var w = play(q.slice(), r, 0); if (w > reply) { reply = w; } });
-        v = c * 10 - reply * 9 + ri(st, 3);
-        if (v > bestV) { bestV = v; best = mv; }
-      });
-      return best;
-    }
-    return {
-      name: 'Oware', cat: 'board', mins: '6 min', short: 'Ghana\'s classic seed game',
-      blurb: 'The sowing game played across West Africa. Capture 25 of the 48 seeds to win.',
-      lines: [['1 to 6', 'pick one of your pits (bottom row)'], ['Sowing', 'seeds go one per pit, anticlockwise'], ['Capture', 'end on 2 or 3 seeds in the top row']],
-      tip: 'A pit with 12 or more seeds goes all the way round the board.',
-      init: function (sd) { return { p: [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4], ys: 0, cs: 0, lp: 12, lc: 12, c1: 0, c2: 0, n: 0, r: sd, o: 0, m: 0 }; },
-      enc: function (st) {
-        var s = '', i;
-        for (i = 0; i < 12; i++) { s += AL.charAt(st.p[i]); }
-        return [s, b36(st.ys) + '-' + b36(st.cs), b36(st.lp) + b36(st.lc), b36(st.c1) + '-' + b36(st.c2), b36(st.n), b36(st.r), st.o, st.m].join('.');
-      },
-      dec: function (s) {
-        var a = s.split('.'), p = [], i, y = a[1].split('-'), c = a[3].split('-');
-        for (i = 0; i < 12; i++) { p.push(Math.max(0, AL.indexOf(a[0].charAt(i)))); }
-        return { p: p, ys: p36(y[0]), cs: p36(y[1]), lp: p36(a[2].charAt(0)), lc: p36(a[2].charAt(1)), c1: p36(c[0]), c2: p36(c[1] || '0'), n: p36(a[4]), r: p36(a[5]), o: num(a[6]), m: num(a[7]) };
-      },
-      step: function (st, a) {
-        var i = num(a), ok = false, mv;
-        each(legal(st.p, 0), function (l) { if (l === i) { ok = true; } });
-        if (!ok) { return; }
-        st.c1 = play(st.p, i, 0); st.ys += st.c1; st.lp = i; st.n++; st.lc = 12; st.c2 = 0;
-        if (ended(st, 1)) { return; }
-        mv = cpuMove(st);
-        st.c2 = play(st.p, mv, 1); st.cs += st.c2; st.lc = mv; st.n++;
-        ended(st, 0);
-      },
-      draw: function (st) {
-        var sc = scene(6, 4, 20, 20, '#55361a'), c, idx, row;
-        R(sc, 0.05, 0.55, 5.9, 2.9, '#8a5a2e');
-        R(sc, 0.05, 1.98, 5.9, 0.04, '#55361a');
-        each([0.8, 1.3, 2.6, 3.1], function (y) { R(sc, 0.1, y, 5.8, 0.02, '#a06a38'); });
-        T(sc, 3, 0.27, 'Computer ' + st.cs, '#f4dca6', 9);
-        T(sc, 3, 3.73, 'You ' + st.ys, '#ffd23c', 9);
-        for (row = 0; row < 2; row++) {
-          for (c = 0; c < 6; c++) {
-            idx = row === 0 ? 11 - c : c;
-            if ((row === 0 && idx === st.lc) || (row === 1 && idx === st.lp)) { C(sc, c + 0.5, row + 1.5, 0.49, '#ffd23c'); }
-            C(sc, c + 0.5, row + 1.53, 0.43, '#3a220e');
-            C(sc, c + 0.5, row + 1.5, 0.41, '#55361a');
-            T(sc, c + 0.5, row + 1.5, st.p[idx], row ? '#ffd23c' : '#f4dca6', 10);
-          }
-        }
-        return sc;
-      },
-      icon: function (sc) { C(sc, 0.3, 0.33, 0.17, '#55361a'); C(sc, 0.7, 0.33, 0.17, '#55361a'); C(sc, 0.3, 0.7, 0.17, '#55361a'); C(sc, 0.7, 0.7, 0.17, '#55361a'); C(sc, 0.3, 0.7, 0.05, '#ffd23c'); C(sc, 0.7, 0.33, 0.05, '#ffd23c'); },
-      help: function (sc) {
-        var c;
-        R(sc, 0.2, 0.3, 7.4, 4.2, '#8a5a2e');
-        for (c = 0; c < 6; c++) { C(sc, 0.9 + c * 1.2, 1.4, 0.45, '#55361a'); C(sc, 0.9 + c * 1.2, 3.4, 0.45, '#55361a'); T(sc, 0.9 + c * 1.2, 3.4, c + 1, '#ffd23c', 8); }
-        S(sc, 7.75, 2.0, 'arrow');
-        R(sc, 8.6, 0.6, 3.2, 1.1, '#ffd23c'); T(sc, 10.2, 1.15, 'CPU', '#101a3a', 8);
-        R(sc, 8.6, 2.9, 3.2, 1.1, '#3a8ef0'); T(sc, 10.2, 3.45, 'You 1-6', '#ffffff', 8);
-      },
-      pad: function (st) {
-        var row = [], ok = {}, i;
-        each(legal(st.p, 0), function (l) { ok[l] = true; });
-        for (i = 0; i < 6; i++) { row.push([String(i), String(i + 1), ok[i] ? '' : false]); }
-        return [row];
-      },
-      top: function (st) { return 'You ' + st.ys + ' - ' + st.cs + ' CPU'; },
-      ev: function (st) {
-        if (st.o) { return ['', 'You win!', 'The computer wins', 'A draw'][st.m]; }
-        if (st.lp === 12) { return ''; }
-        return 'You +' + st.c1 + ' &middot; CPU +' + st.c2;
-      },
-      info: function (st) { return st.o ? 'Game finished' : 'Your turn: pick a pit 1 to 6'; },
-      lives: function () { return null; },
-      score: function (st) { return st.ys; }
-    };
-  }());
-
-  /* ---------- Cowrie Merge: merge puzzle ---------- */
-  G.cowrie = (function () {
-    var COL = ['#c9a87a', '#fbf1dc', '#f6deb4', '#f28c18', '#e86a24', '#e03c32', '#c22a2a', '#ffd23c', '#e2b21e', '#1e8a3c', '#22a6a0', '#1c3e9c', '#9a4fd0'];
-    var SHD = ['#b8966a', '#d9c9a8', '#d6bd8e', '#b85c08', '#a84a14', '#9c1c1c', '#8a1a1a', '#c99a12', '#a88210', '#0f5228', '#126a66', '#101a3a', '#5a2a8a'];
-    function lines(dir) {
-      var L = [], i, j, line;
-      for (i = 0; i < 4; i++) {
-        line = [];
-        for (j = 0; j < 4; j++) {
-          if (dir === 'L') { line.push(i * 4 + j); } else if (dir === 'R') { line.push(i * 4 + 3 - j); }
-          else if (dir === 'U') { line.push(j * 4 + i); } else { line.push((3 - j) * 4 + i); }
-        }
-        L.push(line);
-      }
-      return L;
-    }
-    function slide(st, dir, apply) {
-      var moved = false, gain = 0, g = st.g.slice();
-      each(lines(dir), function (line) {
-        var vals = [], out = [], i;
-        each(line, function (ix) { if (g[ix]) { vals.push(g[ix]); } });
-        for (i = 0; i < vals.length; i++) {
-          if (i + 1 < vals.length && vals[i] === vals[i + 1]) { out.push(vals[i] + 1); gain += Math.pow(2, vals[i] + 1); i++; } else { out.push(vals[i]); }
-        }
-        while (out.length < 4) { out.push(0); }
-        each(line, function (ix, k) { if (g[ix] !== out[k]) { moved = true; } g[ix] = out[k]; });
-      });
-      if (apply && moved) { st.g = g; st.sc += gain; }
-      return moved;
-    }
-    function spawn(st) {
-      var free = [], i;
-      for (i = 0; i < 16; i++) { if (!st.g[i]) { free.push(i); } }
-      if (free.length) { st.g[free[ri(st, free.length)]] = ri(st, 10) === 0 ? 2 : 1; }
-    }
-    function canMove(st) { return slide(st, 'L') || slide(st, 'R') || slide(st, 'U') || slide(st, 'D'); }
-    function tile(sc, x, y, e, w, h) {
-      var v = Math.pow(2, e);
-      R(sc, x, y, w, h, COL[Math.min(e, 12)]);
-      R(sc, x, y + h * 0.82, w, h * 0.18, SHD[Math.min(e, 12)]);
-      if (e) { T(sc, x + w / 2, y + h * 0.45, v, e < 3 ? '#55361a' : '#ffffff', v >= 1000 ? 8 : 10); }
-    }
-    return {
-      name: 'Cowrie Merge', cat: 'puzzle', mins: '5 min', short: 'Slide and merge the cowries',
-      blurb: 'Slide the cowrie shells. Two of the same number merge into one worth double.',
-      lines: [['Up, Down, Left, Right', 'slide every cowrie'], ['Merge', '2 + 2 make 4, 4 + 4 make 8'], ['Target', 'reach 128 to level up']],
-      tip: 'Keep your biggest cowrie in one corner.',
-      init: function (sd) { var st = { g: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], sc: 0, tg: 7, r: sd, o: 0, m: 0 }; spawn(st); spawn(st); return st; },
-      enc: function (st) { var s = '', i; for (i = 0; i < 16; i++) { s += b36(st.g[i]); } return [s, b36(st.sc), b36(st.tg), b36(st.r), st.o, st.m].join('.'); },
-      dec: function (s) {
-        var a = s.split('.'), g = [], i;
-        for (i = 0; i < 16; i++) { g.push(p36(a[0].charAt(i))); }
-        return { g: g, sc: p36(a[1]), tg: p36(a[2]), r: p36(a[3]), o: num(a[4]), m: num(a[5]) };
-      },
-      step: function (st, a) {
-        var mx = 0, i;
-        st.m = 0;
-        if (!slide(st, a, true)) { st.m = 2; return; }
-        spawn(st);
-        for (i = 0; i < 16; i++) { if (st.g[i] > mx) { mx = st.g[i]; } }
-        if (mx >= st.tg) { st.m = 1; st.tg++; }
-        if (!canMove(st)) { st.o = 1; st.m = 3; }
-      },
-      draw: function (st) {
-        var sc = scene(4, 4, 30, 22, '#a88a5c'), i;
-        for (i = 0; i < 16; i++) { tile(sc, i % 4 + 0.05, Math.floor(i / 4) + 0.07, st.g[i], 0.9, 0.86); }
-        return sc;
-      },
-      icon: function (sc) { S(sc, 0.08, 0.08, 'cowrie', { k: 2 }); },
-      help: function (sc) {
-        var sc2 = sc;
-        tile(sc2, 0.5, 1.2, 1, 2.6, 2.4); T(sc2, 3.65, 2.3, '+', '#55361a', 12);
-        tile(sc2, 4.3, 1.2, 1, 2.6, 2.4); S(sc2, 7.2, 2.0, 'arrow', { ro: 1 });
-        tile(sc2, 8.6, 1.2, 2, 2.6, 2.4);
-      },
-      pad: function () { return [[['U', 'Up']], [['L', 'Left'], ['R', 'Right']], [['D', 'Down']]]; },
-      top: function (st) { return 'Score ' + st.sc; },
-      ev: function (st) { return ['', 'Target reached!', 'That way is blocked', 'No moves left'][st.m]; },
-      info: function (st) { return 'Target ' + Math.pow(2, st.tg); },
-      lives: function () { return null; },
-      score: function (st) { return st.sc; }
-    };
-  }());
-
-  /* =====================================================================
-     PAGES
-     ===================================================================== */
-  function kente() {
-    var cols = ['#e03c32', '#ffd23c', '#1e8a3c', '#101a3a'], h = '<table class="ks" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>', i;
-    for (i = 0; i < 12; i++) { h += '<td height="3" bgcolor="' + cols[i % 4] + '"></td>'; }
-    return h + '</tr></table>';
-  }
-  function topBar(left, right) { return '<div class="hd">' + (right ? '<span class="r">' + right + '</span>' : '') + left + '</div>' + kente(); }
-  function logo() { return '<span class="lg">v</span>play <span class="lw">Games</span>'; }
-  var IBG = { chop: '#101a3a', harm: '#101a3a', road: '#1e8a3c', coco: '#8fd8ff', mamba: '#f4dca6', pen: '#1e8a3c', oware: '#8a5a2e', cowrie: '#f4dca6' };
-  function icon(id) { var sc = scene(1, 1, 24, 24, IBG[id] || catOf(id).col); G[id].icon(sc); return pic(sc, 1, 'ic'); }
-  function hearts(l) {
-    var sc = scene(l[1], 1, 8, 7, '#101a3a'), i;
-    for (i = 0; i < l[1]; i++) { S(sc, i + 0.06, 0.07, 'heart', { sw: i < l[0] ? '' : 'r=G,w=G' }); }
-    return pic(sc, 1);
-  }
-  function adSlot() { return '<div class="ad">Advertisement</div>'; }
-  function catBand(c, count) { return '<div class="cat" style="background:' + c.col + '"><span class="r cn">' + count + '</span>' + c.name + '</div>'; }
   function gameRow(id) {
-    var c = catOf(id), g = G[id];
-    return '<div class="gr" style="border-left-color:' + c.col + '">' + icon(id) + lnk(url({ p: 'i', g: id }), g.name) + '<br><span class="d">' + g.short + '</span></div>';
+    var g = G[id], c = CATS[g.cat];
+    return '<a class="row" style="border-left-color:' + c[1] + '" href="' + esc(url({ p: 'i', g: id })) + '">' +
+      '<span class="ic">' + icon(id, SMALL ? 20 : 32) + '</span><span class="tx"><b>' + g.name + '</b>' +
+      (SMALL ? '' : '<br>' + tag(g.cat) + ' <span class="d">' + g.short + '</span>') + '</span></a>';
   }
-  function others(id, n) {
-    var out = [], i = 0, start = 0, k;
-    for (k = 0; k < ORDER.length; k++) { if (ORDER[k] === id) { start = k; } }
-    while (out.length < n && i < ORDER.length) { i++; out.push(ORDER[(start + i) % ORDER.length]); }
-    return out;
-  }
-  function footer() {
-    var r = Q.r || 'svg', z = zoom(), h = '<div class="ft">Pictures: ';
-    each([['svg', 'SVG'], ['img', 'Image'], ['tbl', 'Table']], function (m) {
-      h += (r === m[0] ? '<span class="on">' + m[1] + '</span>' : lnk(url({ p: Q.p, g: Q.g, s: Q.s, r: m[0] }), m[1])) + ' ';
-    });
-    h += '<br>Size: ';
-    each([['', 'Auto'], ['1', 'Small'], ['2', 'Big']], function (m) {
-      h += ((Q.z || '') === m[0] ? '<span class="on">' + m[1] + '</span>' : lnk(url({ p: Q.p, g: Q.g, s: Q.s, z: m[0] }), m[1])) + ' ';
-    });
-    return h + '<br>' + lnk('test.html', 'Phone test page') + '</div>';
-  }
+  function startUrl(id) { return url({ p: 'p', g: id, s: G[id].enc(G[id].init(newSeed())) }); }
 
+  /* ---------- pages ---------- */
   function pageHome() {
-    var h = topBar(logo(), 'Free'), cont = getC('vc'), parts, pick, g, i, n, sc;
+    var h = header(logo(), SMALL ? '8 free' : '8 free games'), cont = getC('vc'), parts, pick, g;
     if (cont) {
       parts = cont.split('|');
-      if (G[parts[0]] && parts[1]) { h += '<div class="cont">' + lnk(url({ p: 'p', g: parts[0], s: parts[1] }), 'Continue ' + G[parts[0]].name + ' &rsaquo;') + '</div>'; }
+      if (G[parts[0]] && parts[1]) { h += lnk(url({ p: 'p', g: parts[0], s: parts[1] }), 'Continue ' + G[parts[0]].name + ' &raquo;', 'cont'); }
     }
-    pick = ORDER[Math.floor(new Date().getTime() / 86400000) % ORDER.length];
-    g = G[pick];
-    sc = g.draw(g.init(4242));
-    h += '<div class="tp">Today\'s pick</div><div class="pk">' + pic(sc, 0.5 * zoom(), 'th') + '<b>' + g.name + '</b><br><span class="d">' + g.short + '</span><br>' +
-      lnk(url({ p: 'i', g: pick }), 'Play now', 'bp') + '</div>';
-    each(CATS, function (c) {
-      n = 0;
-      for (i = 0; i < ORDER.length; i++) { if (G[ORDER[i]].cat === c.id) { n++; } }
-      h += catBand(c, n + (n === 1 ? ' game' : ' games'));
-      for (i = 0; i < ORDER.length; i++) { if (G[ORDER[i]].cat === c.id) { h += gameRow(ORDER[i]); } }
-    });
-    return h + adSlot() + footer();
-  }
-
-  function pageIntro(id) {
-    var g = G[id], c = catOf(id), best = getC('b' + id), h, hs = scene(12, 5, 10, 10, '#ffffff');
-    h = topBar(lnk(url({}), '&lsaquo; All games'), best ? 'Best ' + esc(best) : '');
-    h += '<div class="fr">' + pic(g.draw(g.init(4242))) + '</div>';
-    h += '<div class="ti"><b>' + g.name + '</b><br><span class="tag" style="background:' + c.col + '">' + c.name + '</span> <span class="tag tg">' + g.mins +
-      '</span> <span class="tag t2">2G ok</span></div>';
-    h += '<div class="p">' + g.blurb + '</div>';
-    h += lnk(url({ p: 'p', g: id, s: g.enc(g.init(newSeed())), f: '1' }), 'Play', 'btn');
-    h += '<div class="sec">How to play</div>';
-    g.help(hs);
-    h += '<div class="hp">' + pic(hs) + '</div>';
-    each(g.lines, function (l) { h += '<div class="hl"><b>' + l[0] + '</b>: ' + l[1] + '</div>'; });
-    h += '<div class="tip">Tip: ' + g.tip + '</div>';
-    return h + adSlot() + '<div class="ft">' + lnk(url({}), '&lsaquo; All games') + '</div>';
-  }
-
-  function pagePlay(id) {
-    var g = G[id], st, cur, h, rows, ev, lv;
-    try { st = g.dec(Q.s); cur = g.enc(st); if (cur !== Q.s) { st = g.dec(cur); } } catch (e) { st = g.init(newSeed()); cur = g.enc(st); }
-    if (st.o) { return pageOver(id, st); }
-    setC('vc', id + '|' + cur);
-    lv = g.lives(st);
-    /* No links above the controls: after each reload the first link the
-       phone highlights should be a game control. */
-    ev = g.ev(st) || (Q.f ? g.short : '');
-    /* An event message takes over the header line, so the picture and the
-       controls never move down the screen. */
-    h = '<div class="hd hs' + (ev ? ' hev' : '') + '">' + (lv ? '<span class="r">' + hearts(lv) + '</span>' : '') + (ev || g.top(st)) + '</div>';
-    h += '<div class="fr">' + pic(g.draw(st)) + '</div>';
-    rows = g.pad(st);
-    h += '<div class="pad">';
-    each(rows, function (row) {
-      h += '<div>';
-      each(row, function (c) {
-        if (c[2] === false) { h += '<span class="dis">' + c[1] + '</span> '; return; }
-        var nx = g.dec(cur);
-        g.step(nx, c[0]);
-        h += lnk(url({ p: 'p', g: id, s: g.enc(nx) }), c[1], c[2] === 'a' ? 'b ba' : 'b') + ' ';
-      });
-      h += '</div>';
-    });
-    h += '</div><div class="inf">' + (ev ? g.top(st) + ' &middot; ' : '') + g.info(st) + '</div>';
-    h += '<div class="ft"><b>' + g.name + '</b> &middot; ' + lnk(url({ p: 'i', g: id }), 'Help') + ' &middot; ' + lnk(url({}), 'All games') + '</div>';
+    pick = ORDER[Math.floor(new Date().getTime() / 86400000) % ORDER.length]; g = G[pick];
+    h += '<div class="pick"><span class="pi">' + icon(pick, SMALL ? 28 : 48) + '</span><span class="pt"><span class="lab">' + (SMALL ? 'PICK' : 'TODAY\'S PICK') +
+      '</span><br><b>' + g.name + '</b>' + (SMALL ? '' : '<br><span class="d">' + g.short + '</span>') + '</span>' + lnk(startUrl(pick), 'PLAY NOW', 'play') + '</div>';
+    h += '<div class="sec"><span class="r">8</span>ALL GAMES</div>';
+    each(ORDER, function (id) { h += gameRow(id); });
+    h += adSlot() + '<div class="tip">Tip: press 1, then Fullscreen mode, for a bigger game.</div>';
+    h += '<div class="ft">Size: ' + (SMALL ? '<b>Small</b> ' + lnk(url({ z: 'l' }), 'Large') : lnk(url({ z: 's' }), 'Small') + ' <b>Large</b>') +
+      '<br>Free games, no sign-up. ' + lnk('test.html', 'Phone test') + '</div>';
     return h;
   }
-
+  function pageIntro(id) {
+    var g = G[id], best = getC('b' + id), h;
+    h = header(g.name, CATS[g.cat][0]);
+    h += '<div class="fr">' + g.draw(g.init(4242), PW) + '</div>';
+    h += lnk(startUrl(id), 'PLAY', 'play big');
+    h += '<div class="tags">' + tag(g.cat) + ' <span class="tag" style="background:#4a4f58">vs computer</span> <span class="tag" style="background:#22a6a0">2G ok</span>' +
+      (best ? ' <span class="d">Best ' + esc(best) + '</span>' : '') + '</div>';
+    h += '<div class="p">' + g.blurb + '</div><div class="sec">HOW TO PLAY</div>';
+    h += '<div class="hl"><b>Up/Down</b> picks a choice. <b>Centre key</b> plays it.</div>';
+    each(g.lines, function (l) { h += '<div class="hl">' + l + '</div>'; });
+    h += '<div class="tip">Tip: press 1, then Fullscreen mode, for a bigger game.</div>';
+    return h + '<div class="ft">' + lnk(url({}), '&laquo; All games') + '</div>';
+  }
+  function pagePlay(id) {
+    var g = G[id], st, cur, h, ch, ev;
+    try { st = g.dec(Q.s); cur = g.enc(st); } catch (e) { st = g.init(newSeed()); cur = g.enc(st); }
+    if (g.over(st)) { return pageOver(id, st); }
+    setC('vc', id + '|' + cur);
+    ev = g.ev(st);
+    if (SMALL && ev) { var sn = ev.match(/[^.!?]+[.!?]*/g); if (sn && sn.length > 1) { ev = sn[sn.length - 1].replace(/^ +/, ''); } }
+    h = '<div class="ev' + (ev ? '' : ' ev0') + '">' + (SMALL ? '' : '<span class="r">' + g.status(st) + '</span>') + (ev || g.name) + '</div>';
+    h += '<div class="fr">' + g.draw(st, PW) + '</div>';
+    if (g.prompt) { h += '<div class="q">' + g.prompt(st) + '</div>'; }
+    ch = g.choices(st);
+    each(ch, function (c) {
+      var nx = g.dec(cur);
+      g.step(nx, c[0]);
+      h += lnk(url({ p: 'p', g: id, s: g.enc(nx) }), c[1], 'ans');
+    });
+    h += '<div class="inf">' + (SMALL ? g.status(st) + ' &middot; ' : '') + g.info(st) + '</div>' + adSlot();
+    return h + '<div class="ft">' + lnk(url({ p: 'i', g: id }), 'Help') + ' &middot; ' + lnk(url({}), 'All games') + '</div>';
+  }
   function pageOver(id, st) {
-    var g = G[id], score = g.score(st), best = num(getC('b' + id)), nb = score > best, h, ev = g.ev(st);
-    if (nb) { setC('b' + id, score); best = score; }
+    var g = G[id], res = g.result(st), best = parseInt(getC('b' + id), 10) || 0, nb = res.score > best, h, i, k = 0;
+    if (nb) { setC('b' + id, res.score); best = res.score; }
     setC('vc', '');
-    h = topBar('Game over');
-    h += '<div class="sb"><span class="d">' + g.name + ' score</span><br><span class="big">' + score + '</span><br>' +
-      (nb && score > 0 ? '<span class="nb">New best!</span>' : 'Best ' + best) + '</div>';
-    if (ev) { h += '<div class="ev">' + ev + '</div>'; }
-    h += lnk(url({ p: 'p', g: id, s: g.enc(g.init(newSeed())) }), 'Play again', 'btn');
-    h += '<div class="sec">Try next</div>';
-    each(others(id, 2), function (o) { h += gameRow(o); });
-    h += '<div class="gr">' + lnk(url({}), 'All games &rsaquo;') + '</div>';
-    h += '<div class="fr">' + pic(g.draw(st), 0.5 * zoom()) + '</div>';
-    return h + adSlot();
+    h = '<div class="ev' + (res.win ? '' : ' evl') + '">' + res.text + '</div>';
+    h += lnk(startUrl(id), 'PLAY AGAIN', 'play big');
+    h += '<div class="sb"><span class="d">' + g.name + ' score</span><br><span class="bg">' + res.score + '</span><br>' +
+      (nb && res.score > 0 ? '<span class="nb">New best!</span>' : '<span class="d">Best ' + best + '</span>') + '</div>';
+    h += '<div class="fr">' + g.draw(st, PW) + '</div>';
+    h += '<div class="sec">TRY NEXT</div>';
+    for (i = 0; i < ORDER.length && k < 2; i++) { if (ORDER[(ORDER.indexOf(id) + 1 + i) % ORDER.length] !== id) { h += gameRow(ORDER[(ORDER.indexOf(id) + 1 + i) % ORDER.length]); k++; } }
+    return h + lnk(url({}), 'All games &raquo;', 'row') + adSlot();
   }
 
-  function render(search) {
-    SVGN = 0;
+  function measure() {
+    var w = 0;
+    try { w = (document.body && document.body.clientWidth) || window.innerWidth || screen.width || 0; } catch (e) { w = 0; }
+    BOOT.w = w;
+    return w;
+  }
+  function setSize(w) {
+    if (Q.z === 's') { SMALL = true; } else if (Q.z === 'l') { SMALL = false; } else { SMALL = !(w >= 180); }
+    PW = SMALL ? 116 : Math.min(226, Math.max(120, (w || 230) - 4));
+    MAXH = SMALL ? 64 : 124;
+  }
+  function render(search, w) {
     Q = parseQ(search);
+    setSize(w === undefined ? BOOT.w : w);
     if (Q.g && !G[Q.g]) { Q.g = ''; }
     if (Q.p === 'p' && Q.g) { return pagePlay(Q.g); }
     if (Q.p === 'i' && Q.g) { return pageIntro(Q.g); }
     return pageHome();
   }
-
   function main() {
-    var html;
-    FIT = fitZoom();
-    try { html = render(location.search); } catch (e) {
-      html = topBar(logo()) + '<div class="p">Something went wrong. ' + lnk('./', 'Start again') +
-        '<br><span class="d">Error: ' + esc((e && (e.message || e.name)) || e) + '</span></div>';
+    var html, w = measure();
+    try { html = render(location.search, w); } catch (e) {
+      html = header(logo()) + '<div class="p">Something went wrong. ' + lnk('./', 'Start again') + '<br><span class="d">Error: ' + esc((e && (e.message || e.name)) || e) + '</span></div>';
     }
     try { if (window.operamini && window.operamini.page) { window.operamini.page.maxAge = Q.p ? 60 : 0; } } catch (e2) { }
+    try { document.body.className = SMALL ? 'sm' : 'lg'; } catch (e3) { }
     document.write(html);
   }
+  var ICONS = {
+    whot: '<rect width="24" height="24" fill="#8a1c1c"/><rect x="3" y="2" width="12" height="17" fill="#fff" stroke="#141414" stroke-width=".8" transform="rotate(-12 9 10)"/><rect x="9" y="5" width="12" height="17" fill="#fff" stroke="#141414" stroke-width=".8"/><circle cx="15" cy="11" r="3" fill="#8a1c1c"/><path d="M12 19l3-4 3 4z" fill="#8a1c1c"/>',
+    danfo: '<rect width="24" height="24" fill="#4a4f58"/><rect x="7.6" y="0" width=".8" height="4" fill="#fff"/><rect x="15.6" y="0" width=".8" height="4" fill="#fff"/><rect x="7.6" y="20" width=".8" height="4" fill="#fff"/><rect x="15.6" y="20" width=".8" height="4" fill="#fff"/><rect x="2" y="6" width="20" height="11" fill="#ffd23c"/><rect x="2" y="9" width="20" height="1.5" fill="#141414"/><rect x="4" y="7" width="3" height="2" fill="#8fd8ff"/><rect x="8.5" y="7" width="3" height="2" fill="#8fd8ff"/><rect x="13" y="7" width="3" height="2" fill="#8fd8ff"/><rect x="17.5" y="7" width="3" height="2" fill="#8fd8ff"/><circle cx="6" cy="17.5" r="2" fill="#141414"/><circle cx="18" cy="17.5" r="2" fill="#141414"/><rect x="20" y="12" width="2" height="2" fill="#e03c32"/>',
+    dambe: '<rect width="24" height="24" fill="#e03c32"/><rect x="0" y="18" width="24" height="6" fill="#c8a06a"/><circle cx="7" cy="6" r="3" fill="#5a3a1c"/><rect x="5" y="9" width="4" height="9" fill="#5a3a1c"/><rect x="9" y="10" width="7" height="2.6" fill="#5a3a1c"/><rect x="15" y="9" width="4.5" height="4.5" fill="#fff"/><rect x="15" y="10.4" width="4.5" height=".8" fill="#c8a06a"/><rect x="15" y="12" width="4.5" height=".8" fill="#c8a06a"/><circle cx="20" cy="4" r="1.6" fill="#ffd23c"/><path d="M20 1v1.2M20 5.8V7M17 4h1.2M21.8 4H23" stroke="#ffd23c" stroke-width=".8"/>',
+    pen: '<rect width="24" height="24" fill="#2e9e4a"/><rect x="2" y="3" width="20" height="11" fill="#fff"/><rect x="3" y="4" width="18" height="10" fill="#cfe9d6"/><path d="M3 6h18M3 8h18M3 10h18M3 12h18M6 4v10M9 4v10M12 4v10M15 4v10M18 4v10" stroke="#9cc8a8" stroke-width=".6"/><circle cx="12" cy="19" r="3.4" fill="#fff"/><path d="M11 17h2l1 1.5-1 1.5h-2l-1-1.5z" fill="#141414"/>',
+    ayo: '<rect width="24" height="24" fill="#f4dca6"/><rect x="1" y="6" width="22" height="12" fill="#8a5a2e"/><g fill="#5a3a1c"><circle cx="4.5" cy="9.5" r="2"/><circle cx="9.5" cy="9.5" r="2"/><circle cx="14.5" cy="9.5" r="2"/><circle cx="19.5" cy="9.5" r="2"/><circle cx="4.5" cy="14.5" r="2"/><circle cx="9.5" cy="14.5" r="2"/><circle cx="14.5" cy="14.5" r="2"/><circle cx="19.5" cy="14.5" r="2"/></g><g fill="#ffd23c"><circle cx="9" cy="9" r=".8"/><circle cx="10.2" cy="10" r=".8"/><circle cx="14.5" cy="14.5" r=".8"/><circle cx="19" cy="9.4" r=".8"/><circle cx="4.5" cy="14" r=".8"/></g>',
+    mango: '<rect width="24" height="24" fill="#8fd8ff"/><circle cx="17" cy="7" r="6" fill="#1e8a3c"/><ellipse cx="15" cy="9" rx="2" ry="2.6" fill="#f28c1e"/><ellipse cx="19.5" cy="6" rx="1.8" ry="2.3" fill="#ffd23c"/><rect x="16.5" y="12" width="2" height="10" fill="#8a5a2e"/><path d="M4 22V15M4 15L2 10M4 15L6.5 10" stroke="#5a3a1c" stroke-width="1.5" fill="none"/><path d="M2 10q2 3 4.5 0" stroke="#e03c32" stroke-width=".8" fill="none"/><circle cx="9.5" cy="9.5" r="1.1" fill="#141414"/><path d="M6 11L9 9.8" stroke="#141414" stroke-width=".5" stroke-dasharray="1 1"/>',
+    cowrie: '<rect width="24" height="24" fill="#9a4fd0"/><rect x="1" y="1" width="10.5" height="10.5" fill="#f4dca6"/><rect x="12.5" y="1" width="10.5" height="10.5" fill="#ffd23c"/><rect x="1" y="12.5" width="10.5" height="10.5" fill="#ffd23c"/><rect x="12.5" y="12.5" width="10.5" height="10.5" fill="#f4dca6"/><ellipse cx="6.2" cy="6.2" rx="3" ry="4" fill="#fff" stroke="#8a5a2e" stroke-width=".7"/><path d="M6.2 3v6.4" stroke="#8a5a2e" stroke-width=".7"/><ellipse cx="17.8" cy="17.8" rx="3" ry="4" fill="#fff" stroke="#8a5a2e" stroke-width=".7"/><path d="M17.8 14.6v6.4" stroke="#8a5a2e" stroke-width=".7"/><text x="17.7" y="9" font-size="7" font-weight="bold" text-anchor="middle" fill="#141414" font-family="sans-serif">4</text><text x="6.3" y="20.5" font-size="7" font-weight="bold" text-anchor="middle" fill="#141414" font-family="sans-serif">8</text>',
+    story: '<rect width="24" height="24" fill="#f28c1e"/><circle cx="18" cy="5" r="3" fill="#ffd23c"/><path d="M0 14h3v-6h3v6h2v-9h4v9h2v-5h3v5h7v10H0z" fill="#101a3a"/><rect x="2" y="15" width="16" height="6" fill="#ffd23c"/><rect x="2" y="15" width="16" height="1.4" fill="#141414"/><rect x="4" y="17" width="3" height="2" fill="#8fd8ff"/><rect x="8.5" y="17" width="3" height="2" fill="#8fd8ff"/><rect x="13" y="17" width="3" height="2" fill="#8fd8ff"/><circle cx="5" cy="21.5" r="1.4" fill="#141414"/><circle cx="15" cy="21.5" r="1.4" fill="#141414"/>'
+  };
+  /* ---------- Whot: Nigeria's card game, you against the computer ----------
+     Card id = shape*32 + number. Shapes: 0 circle 1 triangle 2 cross 3 square
+     4 star 5 whot (20). Specials: 1 Hold on (play again), 2 Pick two
+     (opponent draws 2 and misses a turn), 8 Suspension (opponent misses a
+     turn), 14 General market (opponent draws 1 and misses a turn), 20 Whot
+     (wild: call the shape the opponent must follow). */
+  G.whot = (function () {
+    var SH = ['Circle', 'Triangle', 'Cross', 'Square', 'Star', 'Whot'];
+    var NUMS = [[1, 2, 3, 4, 5, 7, 8, 10, 11, 12, 13, 14], [1, 2, 3, 4, 5, 7, 8, 10, 11, 12, 13, 14],
+      [1, 2, 3, 5, 7, 10, 11, 13, 14], [1, 2, 3, 5, 7, 10, 11, 13, 14], [1, 2, 3, 4, 5, 7, 8]];
+    var SPEC = { 1: 'Hold on', 2: 'Pick two', 8: 'Suspension', 14: 'General market', 20: 'Whot' };
+    var SPEC_SPEC = [['d', 'a'], ['h', 'a'], ['c', 'a'], ['t', 'i'], ['sh', 'i'], ['ask', 'i'], ['m', 'i'], ['mc', 'i'], ['cs', 'i'], ['r', 'i'], ['o', 'i']];
+    function shp(c) { return Math.floor(c / 32); }
+    function num(c) { return c % 32; }
+    function name(c) { return shp(c) === 5 ? 'Whot 20' : SH[shp(c)] + ' ' + num(c); }
+    function deck() { var d = [], s; for (s = 0; s < 5; s++) { each(NUMS[s], function (n) { d.push(s * 32 + n); }); } for (s = 0; s < 5; s++) { d.push(5 * 32 + 20); } return d; }
+    function canPlay(st, c) {
+      if (shp(c) === 5) { return true; }
+      if (shp(st.t) === 5) { return st.sh === 9 || shp(c) === st.sh; }
+      return shp(c) === shp(st.t) || num(c) === num(st.t);
+    }
+    function draw1(st, hand) { if (st.d.length) { hand.push(st.d.pop()); return true; } return false; }
+    function points(hand) { var p = 0; each(hand, function (c) { p += num(c); }); return p; }
+    function value(c) { var n = num(c); return n === 20 ? 5 : (n === 2 ? 40 : (n === 14 ? 35 : (n === 8 ? 30 : (n === 1 ? 25 : n)))); }
+    function playable(st, hand) { var out = []; each(hand, function (c, i) { if (canPlay(st, c)) { out.push(i); } }); out.sort(function (a, b) { return value(hand[b]) - value(hand[a]); }); return out; }
+    function finish(st) { if (!st.h.length || !st.c.length || !st.d.length) { st.o = 1; } }
+    /* returns true if the player who played goes again */
+    function effect(st, c, other) {
+      var n = num(c);
+      st.sh = 9;
+      if (n === 2) { draw1(st, other); draw1(st, other); return true; }
+      if (n === 14) { draw1(st, other); return true; }
+      return n === 1 || n === 8;
+    }
+    function bestShape(hand) { var cnt = [0, 0, 0, 0, 0], b = 0, i; each(hand, function (c) { if (shp(c) < 5) { cnt[shp(c)]++; } }); for (i = 1; i < 5; i++) { if (cnt[i] > cnt[b]) { b = i; } } return b; }
+    function cpuTurn(st) {
+      var guard = 0, p, c, again;
+      st.mc = 0;
+      do {
+        again = false; guard++;
+        if (st.o || !st.c.length) { break; }
+        p = playable(st, st.c);
+        if (!p.length) { draw1(st, st.c); st.mc = 1; break; }
+        c = st.c.splice(p[0], 1)[0]; st.t = c;
+        if (shp(c) === 5) { st.sh = bestShape(st.c); st.mc = 3; }
+        else { again = effect(st, c, st.h); st.mc = again ? 4 : 2; }
+        if (!st.c.length) { break; }
+      } while (again && guard < 8);
+      finish(st);
+    }
+    return {
+      name: 'Whot', cat: 'cards', short: 'Nigeria\'s card game',
+      blurb: 'Match the shape or the number on the top card. First to empty their hand wins.',
+      lines: ['Play a card with the same shape or number, or go to market to pick one.',
+        'Specials: 1 Hold on, 2 Pick two, 8 Suspension, 14 General market.',
+        'Whot 20 plays on anything: then call the shape.'],
+      init: function (sd) {
+        var st = { d: [], h: [], c: [], t: 0, sh: 9, ask: 0, m: 0, mc: 0, cs: 0, r: sd, o: 0 }, i;
+        st.d = shuffle(st, deck());
+        for (i = 0; i < 5; i++) { st.h.push(st.d.pop()); st.c.push(st.d.pop()); }
+        for (i = st.d.length - 1; i >= 0; i--) { if (!SPEC[num(st.d[i])]) { st.t = st.d.splice(i, 1)[0]; break; } }
+        return st;
+      },
+      enc: function (st) { return pack(SPEC_SPEC, st); },
+      dec: function (s) { return unpack(SPEC_SPEC, s); },
+      over: function (st) { return st.o === 1; },
+      choices: function (st) {
+        var out = [], p, i;
+        if (st.ask) {
+          var cnt = [0, 0, 0, 0, 0], order = [0, 1, 2, 3, 4];
+          each(st.h, function (c) { if (shp(c) < 5) { cnt[shp(c)]++; } });
+          order.sort(function (a, b) { return cnt[b] - cnt[a]; });
+          for (i = 0; i < 4; i++) { out.push(['S' + order[i], 'Call ' + SH[order[i]] + (cnt[order[i]] ? ' (you hold ' + cnt[order[i]] + ')' : '')]); }
+          return out;
+        }
+        p = playable(st, st.h);
+        for (i = 0; i < p.length && i < 3; i++) { out.push(['P' + st.h[p[i]], 'Play ' + name(st.h[p[i]]) + (SPEC[num(st.h[p[i]])] && num(st.h[p[i]]) !== 20 ? ' (' + SPEC[num(st.h[p[i]])] + ')' : '')]); }
+        out.push(['M', 'Go to market (pick 1)']);
+        return out;
+      },
+      step: function (st, a) {
+        var c, i, again;
+        st.m = 0; st.mc = 0;
+        if (a.charAt(0) === 'S') { st.sh = parseInt(a.substr(1), 10); st.cs = st.sh; st.ask = 0; st.m = 3; cpuTurn(st); return; }
+        if (a === 'M') { draw1(st, st.h); st.m = 1; finish(st); if (!st.o) { cpuTurn(st); } return; }
+        c = parseInt(a.substr(1), 10); i = st.h.indexOf(c);
+        if (i < 0 || !canPlay(st, c)) { return; }
+        st.h.splice(i, 1); st.t = c;
+        if (!st.h.length) { st.o = 1; st.m = 5; return; }
+        if (shp(c) === 5) { st.ask = 1; st.m = 4; return; }
+        again = effect(st, c, st.c);
+        st.m = again ? 2 : 0;
+        finish(st);
+        if (!again && !st.o) { cpuTurn(st); }
+      },
+      prompt: function (st) { return st.ask ? 'You played Whot 20. Call a shape:' : ''; },
+      draw: function (st, pw) {
+        var b = '', i, n = st.c.length, hx;
+        b += R(0, 0, 120, 70, '#1e6a34');
+        for (i = 0; i < Math.min(n, 9); i++) { b += R(4 + i * 5, 4, 9, 13, '#8a1c1c', ' stroke="#fff" stroke-width="0.6"'); }
+        b += T(4 + Math.min(n, 9) * 5 + 12, 13, n + (n === 1 ? ' card' : ' cards'), 6, '#fff', 'start');
+        b += R(78, 4, 14, 20, '#8a1c1c', ' stroke="#fff" stroke-width="0.6"') + T(85, 30, st.d.length + ' left', 5, '#ffd23c');
+        b += card(42, 21, st.t, 1.6);
+        if (shp(st.t) === 5 && st.sh < 9) { b += T(86, 42, 'Called:', 6, '#ffd23c') + shape(86, 51, st.sh, 5, '#ffd23c'); }
+        hx = Math.max(2, 60 - st.h.length * 6);
+        for (i = 0; i < Math.min(st.h.length, 10); i++) { b += card(hx + i * 12, 52, st.h[i], 0.75, canPlay(st, st.h[i]) && !st.ask); }
+        return svg(120, 70, b, pw);
+      },
+      ev: function (st) {
+        var me = ['', 'You picked one.', 'You go again!', '', 'Call a shape for Whot.', 'You win!'][st.m] || '';
+        var cpu = ['', 'Computer went to market.', 'Computer played ' + name(st.t) + '.', 'Computer played Whot, calls ' + SH[st.sh] + '.', 'Computer played ' + name(st.t) + ' and goes again.'][st.mc] || '';
+        if (st.m === 3) { me = 'You called ' + SH[st.cs] + '.'; }
+        return (me + ' ' + cpu).replace(/^ +| +$/g, '');
+      },
+      status: function (st) { return 'You ' + st.h.length + ' : ' + st.c.length + ' CPU'; },
+      info: function (st) { return st.ask ? 'Pick the shape the computer must follow' : 'Top card: ' + name(st.t) + (shp(st.t) === 5 && st.sh < 9 ? ', called ' + SH[st.sh] : ''); },
+      result: function (st) {
+        var win = !st.h.length || (st.c.length && points(st.h) < points(st.c));
+        if (!st.h.length) { return { win: true, score: 50 + points(st.c), text: 'You win! Hand emptied.' }; }
+        if (!st.c.length) { return { win: false, score: 0, text: 'The computer emptied its hand.' }; }
+        return { win: win, score: win ? 20 + points(st.c) - points(st.h) : 0, text: 'Market is empty. ' + (win ? 'You win on points!' : 'Computer wins on points.') };
+      }
+    };
+    function shape(x, y, s, r, f) {
+      if (s === 0) { return C(x, y, r, f); }
+      if (s === 1) { return P('M' + n1(x) + ' ' + n1(y - r) + 'L' + n1(x + r) + ' ' + n1(y + r * 0.8) + 'H' + n1(x - r) + 'Z', f); }
+      if (s === 2) { return R(x - r, y - r * 0.32, r * 2, r * 0.64, f) + R(x - r * 0.32, y - r, r * 0.64, r * 2, f); }
+      if (s === 3) { return R(x - r * 0.85, y - r * 0.85, r * 1.7, r * 1.7, f); }
+      if (s === 4) {
+        var pts = [], i, a, rr;
+        for (i = 0; i < 10; i++) { a = Math.PI / 5 * i - Math.PI / 2; rr = i % 2 ? r * 0.45 : r; pts.push(n1(x + Math.cos(a) * rr) + ',' + n1(y + Math.sin(a) * rr)); }
+        return '<polygon points="' + pts.join(' ') + '" fill="' + f + '"/>';
+      }
+      return T(x, y + r * 0.45, 'W', r * 1.4, f);
+    }
+    function card(x, y, c, k, glow) {
+      var w = 14 * k, h = 20 * k, col = '#8a1c1c';
+      return R(x, y, w, h, '#fff', ' stroke="' + (glow ? '#ffd23c' : '#141414') + '" stroke-width="' + (glow ? 1.2 : 0.5) + '"') +
+        shape(x + w / 2, y + h * 0.55, shp(c), 4.2 * k, col) + T(x + 2.6 * k, y + 5 * k, String(num(c)), 4.4 * k, col);
+    }
+  }());
+  /* ---------- Danfo Dash: race a Lagos danfo bus through traffic ----------
+     3 lanes, 6 visible rows (row 0 far ahead, row 5 = your bus). Each press
+     the road scrolls 1 row (2 with Boost). Hitting a car costs 3 seconds.
+     Dashed outlines show where every car will be after the next press. */
+  G.danfo = (function () {
+    var LEN = 40, ROWS = 6, RIVALS = [44, 46, 49, 52, 56];
+    var SPEC = [['tr', 'a'], ['pl', 'i'], ['ds', 'i'], ['tm', 'i'], ['bo', 'i'], ['m', 'i'], ['r', 'i'], ['o', 'i']];
+    function genRow(st) {
+      var v = ri(st, 10);
+      if (st.ds + ROWS > LEN) { return 0; }
+      if (v < 4) { return 0; }
+      if (v < 9) { return 1 << ri(st, 3); }
+      return [3, 5, 6][ri(st, 3)];
+    }
+    function place(st) {
+      var ahead = 0;
+      each(RIVALS, function (ft) { if (st.tm * LEN / ft > st.ds) { ahead++; } });
+      return ahead + 1;
+    }
+    function finalPlace(st) { var p = 1; each(RIVALS, function (ft) { if (ft < st.tm) { p++; } }); return p; }
+    function ord(n) { return n + (n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th'); }
+    function scroll(st) {
+      var hit = false;
+      st.tr.pop(); st.tr.unshift(genRow(st));
+      st.ds++;
+      if (st.tr[5] & (1 << st.pl)) { hit = true; st.tr[5] &= ~(1 << st.pl); }
+      return hit;
+    }
+    return {
+      name: 'Danfo Dash', cat: 'racing', short: 'Lagos traffic race',
+      blurb: 'Race your yellow danfo bus through Lagos traffic against five other buses. Plan each move: dashed outlines show where the cars will be.',
+      lines: ['Stay, move left or move right to dodge the cars ahead.',
+        'Dashed outlines show where each car will be after your press.',
+        'Boost jumps two rows, but you only have three. A crash costs 3 seconds.'],
+      init: function (sd) {
+        var st = { tr: [0, 0, 0, 0, 0, 0], pl: 1, ds: 0, tm: 0, bo: 3, m: 0, r: sd, o: 0 }, i;
+        for (i = 0; i < 4; i++) { st.tr[i] = genRow(st); }
+        return st;
+      },
+      enc: function (st) { return pack(SPEC, st); },
+      dec: function (s) { return unpack(SPEC, s); },
+      over: function (st) { return st.o === 1; },
+      choices: function (st) {
+        var out = [['S', 'Stay in lane']];
+        if (st.pl > 0) { out.push(['L', 'Move left']); }
+        if (st.pl < 2) { out.push(['R', 'Move right']); }
+        if (st.bo > 0) { out.push(['B', 'Boost (' + st.bo + ' left)']); }
+        return out;
+      },
+      step: function (st, a) {
+        var hit = false, n = 1;
+        st.m = 0;
+        if (a === 'L' && st.pl > 0) { st.pl--; }
+        if (a === 'R' && st.pl < 2) { st.pl++; }
+        if (a === 'B' && st.bo > 0) { st.bo--; n = 2; st.m = 2; }
+        if (st.tr[5] & (1 << st.pl)) { hit = true; st.tr[5] &= ~(1 << st.pl); }
+        while (n--) { if (scroll(st)) { hit = true; } }
+        st.tm += 1;
+        if (hit) { st.tm += 3; st.m = 1; }
+        if (st.ds >= LEN) { st.o = 1; }
+      },
+      draw: function (st, pw) {
+        var b = '', y, l, x, fin = ROWS - 1 - (LEN - st.ds), cols = ['#e03c32', '#1c3e9c', '#f4f4f4'];
+        for (y = 0; y < ROWS; y++) { b += R(19.5, y * 10 + 2, 1, 5, '#fff') + R(39.5, y * 10 + 2, 1, 5, '#fff'); }
+        if (fin >= 0 && fin < ROWS) { for (x = 0; x < 12; x++) { b += R(x * 5, fin * 10 + (x % 2) * 2.5, 5, 2.5, '#fff') + R(x * 5, fin * 10 + ((x + 1) % 2) * 2.5, 5, 2.5, '#141414'); } }
+        for (y = 0; y < ROWS; y++) {
+          for (l = 0; l < 3; l++) {
+            if (st.tr[y] & (1 << l)) {
+              x = l * 20 + 5;
+              if (y < ROWS - 1) { b += GH(x, (y + 1) * 10 + 1.5, 10, 7, '#ffd23c'); }
+              b += R(x, y * 10 + 1.5, 10, 7, cols[(y + l + st.ds) % 3]) + R(x + 1.5, y * 10 + 2.5, 7, 2, '#8fd8ff');
+            }
+          }
+        }
+        x = st.pl * 20 + 4;
+        b += R(x, 51, 12, 8, '#ffd23c', ' stroke="#141414" stroke-width="0.5"') + R(x, 53.5, 12, 1, '#141414') + R(x + 1.5, 51.6, 9, 1.6, '#8fd8ff') +
+          C(x + 3, 59, 1.5, '#141414') + C(x + 9, 59, 1.5, '#141414');
+        return svg(60, 61, b, pw, '#4a4f58');
+      },
+      ev: function (st) { return ['', 'Crash! You lose 3 seconds.', 'Boost!'][st.m]; },
+      status: function (st) { return ord(place(st)) + ' of 6'; },
+      info: function (st) { return 'Distance ' + st.ds + ' of ' + LEN + ' &middot; Time ' + st.tm + ' s'; },
+      result: function (st) {
+        var p = finalPlace(st);
+        return { win: p <= 3, score: Math.max(0, 200 - st.tm * 3) + (7 - p) * 20, text: 'Finished ' + ord(p) + ' of 6 in ' + st.tm + ' seconds' + (p === 1 ? ' - champion!' : '') };
+      }
+    };
+  }());
+  /* ---------- Dambe Fighter: Hausa traditional boxing ----------
+     Jab beats Hook (faster), Hook beats Block (breaks the guard), Block beats
+     Jab (stops it and counters). Same move: they cancel. Before each exchange
+     the rival shows a tell; it is honest 6 times in 10. First to 3 clean hits. */
+  G.dambe = (function () {
+    var MV = ['Jab', 'Hook', 'Block'], BEATS = [1, 2, 0];
+    var TELL = ['He bounces on his toes...', 'He winds up his right arm...', 'He raises his guard...'];
+    var SPEC = [['y', 'i'], ['c', 'i'], ['nx', 'i'], ['tl', 'i'], ['ly', 'i'], ['lc', 'i'], ['m', 'i'], ['n', 'i'], ['r', 'i']];
+    function plan(st) {
+      st.nx = ri(st, 3);
+      st.tl = ri(st, 10) < 6 ? st.nx : (st.nx + 1 + ri(st, 2)) % 3;
+    }
+    function fighter(x, c, face, mv, hit) {
+      var d = face, b = '', arm;
+      b += C(x, 10, 3.2, c) + R(x - 2.8, 13.2, 5.6, 9, c) + R(x - 2.8, 22, 2.2, 5, c) + R(x + 0.6, 22, 2.2, 5, c) + R(x - 2.8, 20, 5.6, 2, '#e03c32');
+      if (mv === 2) { arm = R(x + d * 1, 9, 2.4, 6, c) + R(x + d * 1 - 0.2, 7.5, 2.8, 2.6, '#fff'); }
+      else if (mv === 1) { arm = R(x + (d > 0 ? 2 : -9), 12, 7, 2.4, c) + R(x + (d > 0 ? 8 : -10.5), 10.5, 3, 3.6, '#fff'); }
+      else if (mv === 0) { arm = R(x + (d > 0 ? 2 : -10), 14, 8, 2, c) + R(x + (d > 0 ? 9.5 : -11), 13.2, 2.6, 3, '#fff'); }
+      else { arm = R(x + (d > 0 ? 2 : -6), 14.5, 4, 2, c) + R(x + (d > 0 ? 5.5 : -7.5), 13.5, 2.6, 3, '#fff'); }
+      b += arm;
+      if (hit) { b += P('M' + n1(x - 6) + ' 6l2 2 1-3 1 3 2-2-1 3 3 1-3 1', '#ffd23c'); }
+      return b;
+    }
+    function bar(x, n, col) { var b = '', i; for (i = 0; i < 3; i++) { b += R(x + i * 6, 2, 5, 3, i < n ? col : '#5a3a1c'); } return b; }
+    return {
+      name: 'Dambe Fighter', cat: 'action', short: 'Hausa boxing',
+      blurb: 'Dambe is the traditional boxing of the Hausa people. Read your rival, then strike. Three clean hits wins the bout.',
+      lines: ['Jab beats Hook. Hook beats Block. Block beats Jab.',
+        'Before each exchange your rival shows a tell. It is honest a bit more than half the time.',
+        'First fighter to land 3 clean hits wins.'],
+      init: function (sd) { var st = { y: 0, c: 0, nx: 0, tl: 0, ly: 3, lc: 3, m: 0, n: 0, r: sd }; plan(st); return st; },
+      enc: function (st) { return pack(SPEC, st); },
+      dec: function (s) { return unpack(SPEC, s); },
+      over: function (st) { return st.y >= 3 || st.c >= 3 || st.n >= 20; },
+      prompt: function (st) { return TELL[st.tl]; },
+      choices: function () { return [['0', 'Jab (beats Hook)'], ['1', 'Hook (beats Block)'], ['2', 'Block (beats Jab)']]; },
+      step: function (st, a) {
+        var me = parseInt(a, 10), cp = st.nx;
+        st.ly = me; st.lc = cp; st.n++;
+        if (me === cp) { st.m = 3; }
+        else if (BEATS[me] === cp) { st.y++; st.m = 1; }
+        else { st.c++; st.m = 2; }
+        plan(st);
+      },
+      draw: function (st, pw) {
+        var b = '', me = st.m === 1, cpu = st.m === 2;
+        b += R(0, 27, 60, 9, '#c8a06a') + C(52, 6, 3, '#ffd23c');
+        b += bar(2, st.y, '#1e8a3c') + bar(41, st.c, '#e03c32');
+        b += fighter(20, '#5a3a1c', 1, st.ly, cpu) + fighter(40, '#3a2412', -1, st.lc, me);
+        b += T(20, 34.5, 'You', 4, '#141414') + T(40, 34.5, 'Rival', 4, '#141414');
+        return svg(60, 36, b, pw, '#f28c1e');
+      },
+      ev: function (st) {
+        if (!st.n) { return 'Fight! Read his tell.'; }
+        var t = 'Your ' + MV[st.ly] + ' vs his ' + MV[st.lc] + ': ';
+        return t + ['', 'clean hit!', 'he hits you!', 'no damage.'][st.m];
+      },
+      status: function (st) { return st.y + ' - ' + st.c; },
+      info: function (st) { return 'Exchange ' + (st.n + 1) + ' &middot; first to 3 hits wins'; },
+      result: function (st) {
+        var win = st.y > st.c;
+        return { win: win, score: win ? 100 + (3 - st.c) * 30 : st.y * 20, text: win ? 'Knock-out! You win ' + st.y + ' - ' + st.c + '.' : (st.y === st.c ? 'A draw, ' : 'You were knocked down, ') + st.y + ' - ' + st.c + '.' };
+      }
+    };
+  }());
+  /* ---------- Penalty King: shoot-out against the computer ----------
+     Kicks alternate: you shoot (even k), you save (odd k). 5 each, then
+     sudden death. The striker's run-up hints at his side, honest 6 in 10. */
+  G.pen = (function () {
+    var SIDE = ['left', 'centre', 'right'], HINT = ['He looks to your left...', 'He looks straight at you...', 'He looks to your right...'];
+    var SPEC = [['k', 'i'], ['yk', 'a'], ['ck', 'a'], ['ls', 'i'], ['ld', 'i'], ['hn', 'i'], ['m', 'i'], ['r', 'i']];
+    function sum(a) { var s = 0; each(a, function (v) { s += v === 1 ? 1 : 0; }); return s; }
+    function decided(st) {
+      var y = sum(st.yk), c = sum(st.ck), ny = st.yk.length, nc = st.ck.length;
+      if (ny <= 5 && nc <= 5) { return y + (5 - ny) < c || c + (5 - nc) < y; }
+      return ny === nc && y !== c;
+    }
+    function dots(b, x, y, a, n) { var i; for (i = 0; i < n; i++) { b.s += C(x + i * 6, y, 2, a[i] === 1 ? '#1e8a3c' : (a[i] === 0 ? '#e03c32' : '#d6d2c8')); } }
+    return {
+      name: 'Penalty King', cat: 'sports', short: 'Win the shoot-out',
+      blurb: 'A penalty shoot-out against the computer. Take five kicks, save five, then sudden death.',
+      lines: ['When you shoot, pick left, centre or right. The keeper guesses.',
+        'When you save, read the striker, then dive.',
+        'Most goals after five each wins. Level? Sudden death.'],
+      init: function (sd) { var st = { k: 0, yk: [], ck: [], ls: 9, ld: 9, hn: 9, m: 0, r: sd }; return st; },
+      enc: function (st) { return pack(SPEC, st); },
+      dec: function (s) { return unpack(SPEC, s); },
+      over: function (st) { return decided(st) || st.k >= 30; },
+      prompt: function (st) {
+        if (st.k % 2 === 0) { return 'Your kick. Where do you shoot?'; }
+        return 'Save it! ' + HINT[this.hint(st)];
+      },
+      hint: function (st) { var t = { r: st.r * 7 + st.k }; var aim = this.aim(st); return ri(t, 10) < 6 ? aim : ri(t, 3); },
+      aim: function (st) { var t = { r: st.r + st.k * 31 }; var v = ri(t, 10); return v < 4 ? 0 : (v < 8 ? 2 : 1); },
+      choices: function (st) {
+        var w = st.k % 2 === 0 ? 'Shoot ' : 'Dive ';
+        return [['0', w + 'left'], ['1', w + 'centre'], ['2', w + 'right']];
+      },
+      step: function (st, a) {
+        var me = parseInt(a, 10), other;
+        if (st.k % 2 === 0) {
+          other = ri(st, 10); other = other < 4 ? 0 : (other < 8 ? 2 : 1);
+          st.ls = me; st.ld = other; st.yk.push(me === other ? 0 : 1); st.m = me === other ? 2 : 1;
+        } else {
+          other = this.aim(st);
+          st.ls = other; st.ld = me; st.ck.push(me === other ? 0 : 1); st.m = me === other ? 3 : 4;
+        }
+        st.k++;
+      },
+      draw: function (st, pw) {
+        var b = { s: '' }, bx = [14, 30, 46], kx;
+        b.s += R(0, 22, 60, 18, '#2e9e4a') + R(6, 4, 48, 2, '#fff') + R(6, 4, 2, 19, '#fff') + R(52, 4, 2, 19, '#fff');
+        b.s += R(8, 6, 44, 17, '#cfe9d6');
+        kx = st.ld < 9 ? bx[st.ld] : 30;
+        b.s += C(kx, 11, 2.4, '#ffd23c') + R(kx - 2.5, 13.4, 5, 7, '#ffd23c') + R(kx - 6, 14, 3.5, 1.6, '#ffd23c') + R(kx + 2.5, 14, 3.5, 1.6, '#ffd23c');
+        if (st.ls < 9) { b.s += C(bx[st.ls], st.m === 2 || st.m === 3 ? 18 : 9, 2.2, '#fff', ' stroke="#141414" stroke-width="0.5"'); }
+        else { b.s += C(30, 34, 2.2, '#fff', ' stroke="#141414" stroke-width="0.5"'); }
+        b.s += T(2, 46, 'You', 4.5, '#141414', 'start'); dots(b, 18, 44.5, st.yk, Math.max(5, st.yk.length));
+        b.s += T(2, 53, 'CPU', 4.5, '#141414', 'start'); dots(b, 18, 51.5, st.ck, Math.max(5, st.ck.length));
+        return svg(60, 56, b.s, pw, '#fff8e8');
+      },
+      ev: function (st) { return ['Shoot-out! You kick first.', 'GOAL! Keeper went ' + SIDE[st.ld] + '.', 'Saved! The keeper read it.', 'Great save!', 'He scores. He went ' + SIDE[st.ls] + '.'][st.m]; },
+      status: function (st) { return sum(st.yk) + ' - ' + sum(st.ck); },
+      info: function (st) { return (st.k >= 10 ? 'Sudden death' : 'Kick ' + (Math.floor(st.k / 2) + 1) + ' of 5') + (st.k % 2 ? ' &middot; you are in goal' : ' &middot; you are shooting'); },
+      result: function (st) {
+        var y = sum(st.yk), c = sum(st.ck), win = y > c;
+        return { win: win, score: win ? 100 + y * 10 : y * 10, text: (win ? 'You win the shoot-out ' : 'You lose the shoot-out ') + y + ' - ' + c + '.' };
+      }
+    };
+  }());
+  /* ---------- Ayo (Oware family), Yoruba sowing game ----------
+     Pits 0-5 are yours (A-F, left to right), 6-11 the computer's (shown on
+     top, right to left). Sow anticlockwise, skipping the pit you emptied.
+     If your last seed lands on the computer's side making 2 or 3, capture
+     them, and keep capturing backwards while pits hold 2 or 3. You must give
+     the computer seeds if its side is empty. 25 seeds wins. */
+  G.ayo = (function () {
+    var SPEC = [['a', 'a'], ['sy', 'i'], ['sc', 'i'], ['lc', 'i'], ['ly', 'i'], ['gy', 'i'], ['gc', 'i'], ['n', 'i'], ['r', 'i'], ['o', 'i']];
+    var L = 'ABCDEF';
+    function sow(a, i) {
+      var n = a[i], j = i, cap = 0, mine = i < 6, lo = mine ? 6 : 0;
+      a[i] = 0;
+      while (n > 0) { j = (j + 1) % 12; if (j === i) { continue; } a[j]++; n--; }
+      while (j >= lo && j < lo + 6 && (a[j] === 2 || a[j] === 3)) { cap += a[j]; a[j] = 0; j--; }
+      return cap;
+    }
+    function side(a, mine) { var s = 0, i; for (i = mine ? 0 : 6; i < (mine ? 6 : 12); i++) { s += a[i]; } return s; }
+    function legal(a, mine) {
+      var out = [], i, lo = mine ? 0 : 6, feed = side(a, !mine) === 0, t;
+      for (i = lo; i < lo + 6; i++) {
+        if (!a[i]) { continue; }
+        if (feed) { t = a.slice(); sow(t, i); if (side(t, !mine) === 0) { continue; } }
+        out.push(i);
+      }
+      return out;
+    }
+    function gain(a, i) { var t = a.slice(); return sow(t, i); }
+    function endCheck(st) {
+      if (st.sy >= 25 || st.sc >= 25) { st.o = 1; return; }
+      if (!legal(st.a, true).length || !legal(st.a, false).length || st.n >= 200) {
+        st.sy += side(st.a, true); st.sc += side(st.a, false);
+        each(st.a, function (v, i) { st.a[i] = 0; });
+        st.o = 1;
+      }
+    }
+    function cpu(st) {
+      var mv = legal(st.a, false), best = -1, bv = -1;
+      if (!mv.length) { endCheck(st); return; }
+      if (ri(st, 10) < 5) { best = mv[ri(st, mv.length)]; } else { each(mv, function (i) { var g = gain(st.a, i) * 10 + ri(st, 10); if (g > bv) { bv = g; best = i; } }); }
+      st.lc = best; st.gc = sow(st.a, best); st.sc += st.gc; st.n++;
+      endCheck(st);
+    }
+    return {
+      name: 'Ayo', cat: 'board', short: 'Seed sowing',
+      blurb: 'Ayo is the Yoruba sowing game, played across West Africa as Oware. Sow seeds, capture twos and threes, and collect 25 to win.',
+      lines: ['Pick one of your pits (bottom row, A to F). Its seeds are sown one per pit, going right.',
+        'If your last seed makes 2 or 3 in a computer pit, you take them, and the pits before it too.',
+        'First to 25 seeds wins.'],
+      init: function (sd) { return { a: [4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4], sy: 0, sc: 0, lc: 12, ly: 12, gy: 0, gc: 0, n: 0, r: sd, o: 0 }; },
+      enc: function (st) { return pack(SPEC, st); },
+      dec: function (s) { return unpack(SPEC, s); },
+      over: function (st) { return st.o === 1; },
+      choices: function (st) {
+        var mv = legal(st.a, true), out = [];
+        mv.sort(function (x, y) { return gain(st.a, y) - gain(st.a, x) || st.a[y] - st.a[x]; });
+        each(mv.slice(0, 4), function (i) { var g = gain(st.a, i); out.push([String(i), 'Pit ' + L.charAt(i) + ' (' + st.a[i] + ' seeds)' + (g ? ' takes ' + g : '')]); });
+        return out;
+      },
+      step: function (st, a) {
+        var i = parseInt(a, 10);
+        if (legal(st.a, true).indexOf(i) < 0) { return; }
+        st.ly = i; st.gy = sow(st.a, i); st.sy += st.gy; st.n++;
+        st.lc = 12; st.gc = 0;
+        endCheck(st);
+        if (!st.o) { cpu(st); }
+      },
+      draw: function (st, pw) {
+        var b = '', i, x, y, v, k, s;
+        b += R(1, 3, 98, 32, '#8a5a2e') + R(1, 3, 98, 32, 'none', ' stroke="#5a3a1c" stroke-width="1"');
+        for (i = 0; i < 12; i++) {
+          x = i < 6 ? 15 + i * 14 : 15 + (11 - i) * 14; y = i < 6 ? 27 : 11; v = st.a[i];
+          b += C(x, y, 6, '#5a3a1c', (i === st.lc || i === st.ly) ? ' stroke="#ffd23c" stroke-width="1.2"' : '');
+          for (k = 0; k < Math.min(v, 6); k++) { b += C(x - 3 + (k % 3) * 3, y - 1.5 + Math.floor(k / 3) * 3, 1.1, '#f4dca6'); }
+          if (v > 6) { b += T(x, y + 4.5, '+' + (v - 6), 3.6, '#ffd23c'); }
+          b += T(x, i < 6 ? y + 12 : y - 7.5, String(v), 5, '#141414');
+        }
+        for (i = 0; i < 6; i++) { b += T(15 + i * 14 - 6.5, 22, L.charAt(i), 3.6, '#f4dca6', 'start'); }
+        b = b.replace(/<text([^>]*)y="45"/g, '<text$1y="45"');
+        return svg(100, 47, b, pw, '#f4dca6');
+      },
+      ev: function (st) {
+        if (!st.n) { return 'Your move. Pick a pit.'; }
+        var t = st.gy ? 'You took ' + st.gy + '. ' : '';
+        return t + (st.lc < 12 ? 'CPU moved (outlined)' + (st.gc ? ' and took ' + st.gc : '') + '.' : '');
+      },
+      status: function (st) { return 'You ' + st.sy + ' : ' + st.sc + ' CPU'; },
+      info: function () { return 'First to 25 seeds wins'; },
+      result: function (st) {
+        var win = st.sy > st.sc;
+        return { win: win, score: st.sy * 4, text: (win ? 'You win ' : (st.sy === st.sc ? 'A draw, ' : 'The computer wins ')) + st.sy + ' - ' + st.sc + '.' };
+      }
+    };
+  }());
+  /* ---------- Mango Defender: slingshot against mango-stealing monkeys ----------
+     Three branches (High, Middle, Low). Each branch holds monkeys at spots
+     1-4 (4 = far end, 1 = next to the mangoes), stored as a 4-bit mask.
+     Each press you fire at one branch and hit its nearest monkey; then every
+     monkey creeps one spot closer, and one at spot 1 grabs a mango. Survive
+     20 turns with at least one mango left. */
+  G.mango = (function () {
+    var BR = ['high', 'middle', 'low'], TURNS = 20;
+    var SPEC = [['b', 'a'], ['mg', 'i'], ['t', 'i'], ['sc', 'i'], ['lh', 'i'], ['lb', 'i'], ['st', 'i'], ['r', 'i']];
+    function low(m) { var i; for (i = 0; i < 4; i++) { if (m & (1 << i)) { return i; } } return 9; }
+    function count(m) { var c = 0, i; for (i = 0; i < 4; i++) { if (m & (1 << i)) { c++; } } return c; }
+    function spawn(st) {
+      var n = st.t < 3 ? 1 : (ri(st, 10) < (st.t < 10 ? 5 : 7) ? 2 : 1), k, br;
+      for (k = 0; k < n; k++) { br = ri(st, 3); st.b[br] |= 8; }
+    }
+    return {
+      name: 'Mango Defender', cat: 'shooting', short: 'Slingshot the thieves',
+      blurb: 'Monkeys are creeping along the branches to raid your mango tree. Fire your slingshot and save the harvest for 20 turns.',
+      lines: ['Pick a branch: high, middle or low. Your stone hits the monkey nearest the mangoes.',
+        'After each shot every monkey moves one step closer. A red mark means it grabs a mango next turn.',
+        'Keep at least one mango for 20 turns to win.'],
+      init: function (sd) { var st = { b: [0, 0, 0], mg: 5, t: 0, sc: 0, lh: 0, lb: 9, st: 0, r: sd }; st.b[1] = 8; st.b[0] = 4; return st; },
+      enc: function (st) { return pack(SPEC, st); },
+      dec: function (s) { return unpack(SPEC, s); },
+      over: function (st) { return st.mg <= 0 || st.t >= TURNS; },
+      choices: function (st) {
+        var order = [0, 1, 2];
+        order.sort(function (x, y) { return low(st.b[x]) - low(st.b[y]) || x - y; });
+        return [[String(order[0]), 'Aim ' + BR[order[0]]], [String(order[1]), 'Aim ' + BR[order[1]]], [String(order[2]), 'Aim ' + BR[order[2]]]];
+      },
+      step: function (st, a) {
+        var b = parseInt(a, 10), i, p;
+        st.lb = b; st.lh = 0; st.st = 0;
+        p = low(st.b[b]);
+        if (p < 9) { st.b[b] &= ~(1 << p); st.lh = 1; st.sc += 10 + (3 - p) * 5; }
+        for (i = 0; i < 3; i++) { if (st.b[i] & 1) { st.mg = Math.max(0, st.mg - 1); st.st++; } st.b[i] = st.b[i] >> 1; }
+        st.t++;
+        if (st.t < TURNS) { spawn(st); }
+      },
+      draw: function (st, pw) {
+        var b = '', i, k, y, x, m;
+        b += R(0, 44, 80, 6, '#5fd35a') + R(4, 6, 6, 40, '#8a5a2e') + C(9, 8, 9, '#1e8a3c');
+        for (k = 0; k < 5; k++) { b += C(5 + (k % 3) * 4, 6 + Math.floor(k / 3) * 4, 2, k < st.mg ? '#f28c1e' : '#0f5a26'); }
+        for (i = 0; i < 3; i++) {
+          y = 14 + i * 11;
+          b += R(10, y, 56, 2.2, '#8a5a2e') + T(70, y + 2.5, ['High', 'Mid', 'Low'][i], 4, '#101a3a', 'start');
+          for (k = 0; k < 4; k++) {
+            x = 18 + k * 12;
+            if (st.b[i] & (1 << k)) {
+              b += GH(x - 15, y - 7, 6, 7, '#fff');
+              b += C(x, y - 4, 3.2, '#7a4a22') + C(x, y - 3.4, 1.8, '#e8c49a') + C(x - 0.8, y - 4.2, 0.45, '#141414') + C(x + 0.8, y - 4.2, 0.45, '#141414');
+              if (k === 0) { b += C(x + 3.5, y - 7, 1.3, '#e03c32'); }
+            }
+          }
+          if (st.lb === i) { b += P('M74 47L' + 66 + ' ' + n1(y + 1) , 'none', ' stroke="#141414" stroke-width="0.4" stroke-dasharray="1 1"'); }
+        }
+        b += R(73, 44, 1.4, 6, '#5a3a1c') + P('M73.7 44l-2.5-4M73.7 44l2.5-4', 'none', ' stroke="#5a3a1c" stroke-width="1"');
+        return svg(80, 50, b, pw, '#8fd8ff');
+      },
+      ev: function (st) {
+        if (!st.t) { return 'Monkeys are coming! Aim and fire.'; }
+        return (st.lh ? 'Hit! ' : 'Missed - nobody there. ') + (st.st ? 'A monkey grabbed a mango!' : '');
+      },
+      status: function (st) { return st.mg + ' mangoes'; },
+      info: function (st) { return 'Turn ' + (st.t + 1) + ' of ' + TURNS + ' &middot; Score ' + st.sc; },
+      result: function (st) {
+        var win = st.mg > 0;
+        return { win: win, score: st.sc + st.mg * 30, text: win ? 'Harvest saved with ' + st.mg + ' mango' + (st.mg === 1 ? '' : 'es') + '!' : 'The monkeys took every mango.' };
+      }
+    };
+  }());
+  /* ---------- Cowrie Merge: slide-and-merge puzzle (2048 style) ----------
+     4x4 grid of exponents (0 empty, 1 = 2, 2 = 4 ...). Only moves that change
+     the grid are offered, the one that merges most first. The new cowrie is
+     outlined so the player sees where it landed. */
+  G.cowrie = (function () {
+    var SPEC = [['g', 'a'], ['sc', 'i'], ['nw', 'i'], ['n', 'i'], ['lm', 'i'], ['r', 'i']];
+    var DN = { U: 'Slide up', L: 'Slide left', R: 'Slide right', D: 'Slide down' };
+    var COL = ['#efe6cf', '#f4dca6', '#ffd23c', '#f28c1e', '#e03c32', '#c2185b', '#9a4fd0', '#1c3e9c', '#22a6a0', '#1e8a3c', '#101a3a', '#141414'];
+    function line(g, d, k) {
+      var idx = [], i;
+      for (i = 0; i < 4; i++) {
+        if (d === 'L') { idx.push(k * 4 + i); } else if (d === 'R') { idx.push(k * 4 + 3 - i); }
+        else if (d === 'U') { idx.push(i * 4 + k); } else { idx.push((3 - i) * 4 + k); }
+      }
+      return idx;
+    }
+    function move(g, d) {
+      var out = g.slice(), gain = 0, k, idx, vals, res, i, moved = false;
+      for (k = 0; k < 4; k++) {
+        idx = line(g, d, k); vals = []; res = [];
+        each(idx, function (j) { if (g[j]) { vals.push(g[j]); } });
+        for (i = 0; i < vals.length; i++) {
+          if (i + 1 < vals.length && vals[i] === vals[i + 1]) { res.push(vals[i] + 1); gain += 1 << (vals[i] + 1); i++; } else { res.push(vals[i]); }
+        }
+        while (res.length < 4) { res.push(0); }
+        each(idx, function (j, n) { if (out[j] !== res[n]) { moved = true; } out[j] = res[n]; });
+      }
+      return { g: out, gain: gain, moved: moved };
+    }
+    function addTile(st) {
+      var e = [];
+      each(st.g, function (v, i) { if (!v) { e.push(i); } });
+      if (!e.length) { st.nw = 16; return; }
+      st.nw = e[ri(st, e.length)]; st.g[st.nw] = ri(st, 10) < 9 ? 1 : 2;
+    }
+    function moves(st) { var out = []; each(['U', 'L', 'R', 'D'], function (d) { var m = move(st.g, d); if (m.moved) { out.push([d, m.gain]); } }); return out; }
+    function top(st) { var t = 0; each(st.g, function (v) { if (v > t) { t = v; } }); return t; }
+    return {
+      name: 'Cowrie Merge', cat: 'puzzle', short: 'Merge the shells',
+      blurb: 'Slide the cowrie shells. Two of the same number merge into one worth double. How high can you go?',
+      lines: ['Pick a direction: every shell slides that way.',
+        'Two equal shells that meet merge into one worth double.',
+        'The game ends when no slide is possible. Reach 256 to beat the game!'],
+      init: function (sd) { var st = { g: [], sc: 0, nw: 16, n: 0, lm: 0, r: sd }, i; for (i = 0; i < 16; i++) { st.g.push(0); } addTile(st); addTile(st); return st; },
+      enc: function (st) { return pack(SPEC, st); },
+      dec: function (s) { return unpack(SPEC, s); },
+      over: function (st) { return !moves(st).length; },
+      choices: function (st) {
+        var m = moves(st);
+        m.sort(function (a, b) { return b[1] - a[1]; });
+        return m.map(function (x) { return [x[0], DN[x[0]] + (x[1] ? ' (+' + x[1] + ')' : '')]; });
+      },
+      step: function (st, a) {
+        var m = move(st.g, a);
+        if (!m.moved) { return; }
+        st.g = m.g; st.sc += m.gain; st.lm = m.gain; st.n++;
+        addTile(st);
+      },
+      draw: function (st, pw) {
+        var b = '', i, x, y, v;
+        for (i = 0; i < 16; i++) {
+          x = 2 + (i % 4) * 14.5; y = 2 + Math.floor(i / 4) * 14.5; v = st.g[i];
+          b += R(x, y, 13, 13, COL[Math.min(v, 11)], i === st.nw ? ' stroke="#141414" stroke-width="1" stroke-dasharray="1.5 1"' : '');
+          if (v) {
+            b += '<ellipse cx="' + n1(x + 6.5) + '" cy="' + n1(y + 4.3) + '" rx="2.6" ry="1.8" fill="#fff" stroke="#8a5a2e" stroke-width="0.4"/>';
+            b += T(x + 6.5, y + 11.2, String(1 << v), v > 9 ? 4.2 : 5.4, v > 2 ? '#fff' : '#141414');
+          }
+        }
+        return svg(62, 62, b, Math.min(pw, SMALL ? 120 : 180), '#8a5a2e');
+      },
+      ev: function (st) { return !st.n ? 'Slide to merge equal shells.' : (st.lm ? 'Merged! +' + st.lm : 'Shells moved.'); },
+      status: function (st) { return 'Score ' + st.sc; },
+      info: function (st) { return 'Top shell ' + (1 << top(st)) + ' &middot; goal 256'; },
+      result: function (st) { var t = 1 << top(st); return { win: t >= 256, score: st.sc, text: 'No more slides. Top shell: ' + t + (t >= 256 ? ' - you beat it!' : '.') }; }
+    };
+  }());
+  /* ---------- Lagos Hustle: choose-what-happens-next story ----------
+     Each scene: picture, short text, 2-3 choices with a money change (Naira).
+     Scenes without choices are endings. */
+  G.story = (function () {
+    var S = {
+      0: ['bus', 'You step off the bus at Oshodi with N5,000 and a dream: your own phone repair business.',
+        [['Take a danfo to Computer Village (N300)', 1, -300], ['Walk there and save money', 2, 0]]],
+      1: ['market', 'Computer Village is loud and busy. A trader waves a repair kit at you.',
+        [['Buy the kit for N3,000', 3, -3000], ['Ask Mr Tunde for apprentice work', 4, 0]]],
+      2: ['rain', 'Halfway there, the rain pours down. You run under a bridge where Aisha sells phone chargers.',
+        [['Chat with Aisha', 5, 0], ['Keep walking in the rain', 1, 0]]],
+      3: ['table', 'You set up a small table. Your first customer has a cracked screen.',
+        [['Fix it slowly and carefully', 6, 1500], ['Rush it to serve more people', 7, 1000]]],
+      4: ['shop', 'Mr Tunde says yes. After two weeks he pays you N2,000 and gives you old tools.',
+        [['Go solo with your new skills', 3, 2000], ['Stay one more month', 12, 4000]]],
+      5: ['market', 'Aisha has an idea: she sells chargers, you fix phones, and you share one kiosk.',
+        [['Shake hands, partners!', 8, 0], ['Thank her, but go alone', 1, 0]]],
+      6: ['sun', 'Word spreads: "the careful fixer". A school asks you to repair 20 phones by Friday.',
+        [['Accept and hire a helper', 9, 3000], ['Say no, it is too big', 10, 1000]]],
+      7: ['sad', 'The screen cracks again the next day. The customer is very angry.',
+        [['Refund and say sorry', 11, -1000], ['Argue with him', 13, 0]]],
+      8: ['shop', 'The kiosk is busy. Aisha says a solar panel would let you charge phones all night.',
+        [['Buy the solar panel (N2,000)', 9, -2000 + 6000], ['Keep things simple', 10, 2000]]],
+      9: ['school', '', null, 'Boss of the Village! Your stall becomes a real shop with your name on the sign.', 15000],
+      10: ['table', '', null, 'Small but steady. You pay your rent every month and your customers trust you.', 5000],
+      11: ['sun', 'Two days later he comes back with three friends. "This one is honest," he tells them.',
+        [['Fix their phones carefully', 6, 2500]]],
+      12: ['shop', 'Mr Tunde is impressed. He offers you a corner of his shop to run your own repairs.',
+        [['Take the corner', 6, 0], ['Thank him and go solo', 3, 0]]],
+      13: ['sad', '', null, 'Bad news travels fast in the market. You pack up and take the bus home. Try again!', 0]
+    };
+    var SPEC = [['nd', 'i'], ['mo', 'i'], ['n', 'i'], ['r', 'i']];
+    function pic(kind) {
+      var b = '';
+      if (kind === 'bus') { b += R(0, 22, 60, 8, '#4a4f58') + R(10, 10, 34, 12, '#ffd23c') + R(10, 13, 34, 1.5, '#141414') + R(13, 11, 5, 2, '#8fd8ff') + R(21, 11, 5, 2, '#8fd8ff') + R(29, 11, 5, 2, '#8fd8ff') + C(16, 22, 2.5, '#141414') + C(38, 22, 2.5, '#141414') + C(52, 6, 3, '#ffd23c'); }
+      else if (kind === 'market') { b += R(0, 22, 60, 8, '#c8a06a') + R(4, 10, 16, 12, '#e03c32') + R(4, 8, 16, 3, '#fff') + R(24, 12, 14, 10, '#1c3e9c') + R(24, 10, 14, 3, '#ffd23c') + R(42, 9, 15, 13, '#1e8a3c') + R(42, 7, 15, 3, '#fff') + R(8, 14, 3, 4, '#141414') + R(28, 15, 3, 4, '#8fd8ff') + R(47, 13, 3, 5, '#ffd23c'); }
+      else if (kind === 'rain') { var i; b += R(0, 22, 60, 8, '#4a4f58') + R(0, 6, 60, 4, '#9aa0a8') + R(8, 10, 3, 12, '#9aa0a8') + R(49, 10, 3, 12, '#9aa0a8'); for (i = 0; i < 14; i++) { b += R(3 + i * 4.2, (i * 7) % 18 + 11, 0.6, 3, '#8fd8ff'); } b += C(30, 14, 2.4, '#5a3a1c') + R(28, 16.4, 4, 6, '#f28c1e'); }
+      else if (kind === 'table') { b += R(0, 22, 60, 8, '#c8a06a') + R(14, 14, 32, 3, '#8a5a2e') + R(16, 17, 2, 6, '#8a5a2e') + R(42, 17, 2, 6, '#8a5a2e') + R(20, 9, 6, 5, '#141414') + R(21, 10, 4, 3, '#8fd8ff') + R(32, 11, 8, 3, '#e03c32') + C(52, 6, 3, '#ffd23c'); }
+      else if (kind === 'shop') { b += R(0, 22, 60, 8, '#c8a06a') + R(8, 6, 44, 16, '#fff8e8') + R(8, 4, 44, 4, '#1c3e9c') + T(30, 7.4, 'REPAIRS', 3, '#ffd23c') + R(14, 11, 10, 7, '#8fd8ff') + R(30, 10, 8, 12, '#8a5a2e') + R(42, 11, 6, 7, '#8fd8ff'); }
+      else if (kind === 'school') { b += R(0, 22, 60, 8, '#5fd35a') + R(6, 8, 48, 14, '#f28c1e') + P('M4 8L30 1L56 8Z', '#e03c32') + R(26, 14, 8, 8, '#8a5a2e') + R(10, 11, 6, 4, '#8fd8ff') + R(44, 11, 6, 4, '#8fd8ff') + T(30, 6.6, 'YOUR SHOP', 2.8, '#fff'); }
+      else if (kind === 'sun') { b += R(0, 22, 60, 8, '#c8a06a') + C(30, 11, 6, '#ffd23c') + C(14, 18, 2.2, '#5a3a1c') + R(12, 20.2, 4, 4, '#1e8a3c') + C(46, 18, 2.2, '#5a3a1c') + R(44, 20.2, 4, 4, '#1c3e9c'); }
+      else { b += R(0, 22, 60, 8, '#4a4f58') + C(30, 12, 6, '#9aa0a8') + C(28, 11, 0.8, '#141414') + C(32, 11, 0.8, '#141414') + P('M27 16q3-2 6 0', 'none', ' stroke="#141414" stroke-width="0.6"'); }
+      return b;
+    }
+    return {
+      name: 'Lagos Hustle', cat: 'story', short: 'Your choices',
+      blurb: 'You arrive in Lagos with N5,000 and a dream. Every choice changes your story and your money. Can you become Boss of the Village?',
+      lines: ['Read the scene, then pick what you do next.',
+        'Each choice can make or lose you money.',
+        'There are several endings. Find the best one!'],
+      init: function (sd) { return { nd: 0, mo: 5000, n: 0, r: sd }; },
+      enc: function (st) { return pack(SPEC, st); },
+      dec: function (s) { var st = unpack(SPEC, s); if (!S[st.nd]) { throw new Error('bad scene'); } return st; },
+      over: function (st) { return !S[st.nd][2]; },
+      prompt: function (st) { return S[st.nd][1]; },
+      choices: function (st) { var out = []; each(S[st.nd][2] || [], function (c, i) { out.push([String(i), c[0]]); }); return out; },
+      step: function (st, a) { var c = S[st.nd][2][parseInt(a, 10)]; if (!c) { return; } st.mo = Math.max(0, st.mo + c[2]); st.nd = c[1]; st.n++; if (!S[st.nd][2]) { st.mo += S[st.nd][4]; } },
+      draw: function (st, pw) { return svg(60, 30, pic(S[st.nd][0]), pw, '#8fd8ff'); },
+      ev: function (st) { return st.n ? 'Chapter ' + (st.n + 1) : 'Chapter 1: Arrival'; },
+      status: function (st) { return 'N' + st.mo; },
+      info: function (st) { return 'Money: N' + st.mo; },
+      result: function (st) { var s = S[st.nd]; return { win: s[4] > 0, score: Math.round(st.mo / 100), text: s[3] + ' You end with N' + st.mo + '.' }; }
+    };
+  }());
 
-  return { G: G, ORDER: ORDER, CATS: CATS, main: main, render: render, toSvg: toSvg, setQ: function (s) { Q = parseQ(s); } };
+  return { G: G, ORDER: ORDER, render: render, main: main };
 }());
